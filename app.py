@@ -128,6 +128,11 @@ class App(ctk.CTk):
         self.title("YTK SHORTS")
         try:
             self.iconbitmap(os.path.join(RECURSOS, "ytk.ico"))
+            # reforço: ícone em PNG de alta resolução (barra de tarefas nítida)
+            from PIL import Image as _I, ImageTk as _IT
+
+            self._icone_tk = _IT.PhotoImage(_I.open(os.path.join(RECURSOS, "ytk.png")).resize((256, 256)))
+            self.after(300, lambda: self.iconphoto(True, self._icone_tk))
         except Exception:
             pass
         self.geometry("1020x740")
@@ -322,10 +327,17 @@ class App(ctk.CTk):
         # Topo
         topo = ctk.CTkFrame(self, fg_color="transparent")
         topo.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 10))
-        ctk.CTkLabel(
-            topo, text="▶", width=34, height=34, corner_radius=10, fg_color=ACENTO, text_color="white",
-            font=fonte(15, "bold"),
-        ).pack(side="left")
+        try:
+            from PIL import Image as _Img
+
+            _logo = _Img.open(os.path.join(RECURSOS, "ytk.png")).convert("RGBA")
+            self._logo_img = ctk.CTkImage(light_image=_logo, dark_image=_logo, size=(44, 44))
+            ctk.CTkLabel(topo, text="", image=self._logo_img, width=44, height=44).pack(side="left")
+        except Exception:
+            ctk.CTkLabel(
+                topo, text="▶", width=34, height=34, corner_radius=10, fg_color=ACENTO, text_color="white",
+                font=fonte(15, "bold"),
+            ).pack(side="left")
         textos = ctk.CTkFrame(topo, fg_color="transparent")
         textos.pack(side="left", padx=(12, 0))
         ctk.CTkLabel(textos, text="YTK SHORTS", font=fonte(18, "bold"), text_color=TEXTO, anchor="w").pack(anchor="w")
