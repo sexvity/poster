@@ -331,8 +331,8 @@ class App(ctk.CTk):
             from PIL import Image as _Img
 
             _logo = _Img.open(os.path.join(RECURSOS, "ytk.png")).convert("RGBA")
-            self._logo_img = ctk.CTkImage(light_image=_logo, dark_image=_logo, size=(44, 44))
-            ctk.CTkLabel(topo, text="", image=self._logo_img, width=44, height=44).pack(side="left")
+            self._logo_img = ctk.CTkImage(light_image=_logo, dark_image=_logo, size=(52, 52))
+            ctk.CTkLabel(topo, text="", image=self._logo_img, width=52, height=52).pack(side="left")
         except Exception:
             ctk.CTkLabel(
                 topo, text="▶", width=34, height=34, corner_radius=10, fg_color=ACENTO, text_color="white",
