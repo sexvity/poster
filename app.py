@@ -177,11 +177,18 @@ class App(ctk.CTk):
         self.video_duracao = None
         self._opcoes_tiktok = None
         self._barra_ativa = False
+        self.agendados = []  # vídeos esperando o horário de pico (guardados em agendados.json)
+        self._ag_lock = threading.RLock()
+        self._ag_cancel = {}
+        self._esperando = 0
+        self._aba = "log"
+        self._ag_arquivo = os.path.join(BASE, "agendados.json")
         self._montar()
         self._atualizar_previa()
         self._atualizar_status()
         self._atualizar_contas_conectadas()
         self._iniciar_clipes()
+        self._retomar_agendados()
         self.after(150, self._ler_fila)
         self.after(30000, self._tic)
 
@@ -212,11 +219,32 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    def _estilizar_janela(self, j):
+        """Janelas secundárias: ícone do YTK e barra de título escura (o customtkinter recoloca o ícone padrão
+        depois de 200 ms, por isso o reforço atrasado)."""
+        def aplicar():
+            try:
+                if not j.winfo_exists():
+                    return
+                j.iconbitmap(os.path.join(RECURSOS, "ytk.ico"))
+                if sys.platform == "win32":
+                    import ctypes
+
+                    hwnd = ctypes.windll.user32.GetParent(j.winfo_id()) or j.winfo_id()
+                    um = ctypes.c_int(1)
+                    for attr in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (Windows 11 / 10)
+                        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(um), ctypes.sizeof(um))
+            except Exception:
+                pass
+
+        j.after(260, aplicar)
+
     # ------------------------------------------------------ login no navegador
     def _dialogo_link(self, url, nome):
         """Pergunta como abrir o link de login: no navegador padrão ou copiando (para colar em outro navegador)."""
         self._fechar_dialogo_link()
         j = ctk.CTkToplevel(self, fg_color=BG)
+        self._estilizar_janela(j)
         self._dlg_link = j
         j.title(f"Sign in to {nome}")
         j.geometry("460x250")
@@ -509,7 +537,7 @@ class App(ctk.CTk):
             self.sw_compactar.select()
 
         self.sw_auto = ctk.CTkSwitch(
-            c3, text="Auto mode (no review)", font=fonte(12), text_color=MUTED,
+            c3, text="Empty title? AI writes it and posts (no review)", font=fonte(12), text_color=MUTED,
             progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
         )
         self.sw_auto.pack(anchor="w", padx=MARGEM + 2, pady=(0, 10))
@@ -548,15 +576,29 @@ class App(ctk.CTk):
         self.barra.set(0)
 
         c4 = self._cartao(dire, expandir=True)
-        self._rotulo(c4, "ACTIVITY", 16)
+        abas_d = ctk.CTkFrame(c4, fg_color="transparent")
+        abas_d.pack(fill="x", padx=MARGEM, pady=(16, 8))
+        self.btn_aba_log = ctk.CTkButton(
+            abas_d, text="Activity", width=92, height=30, corner_radius=15, font=fonte_t(12),
+            command=lambda: self._aba_direita("log"),
+        )
+        self.btn_aba_log.pack(side="left", padx=(0, 6))
+        self.btn_aba_ag = ctk.CTkButton(
+            abas_d, text="Scheduled", width=124, height=30, corner_radius=15, font=fonte_t(12),
+            command=lambda: self._aba_direita("ag"),
+        )
+        self.btn_aba_ag.pack(side="left")
+        self.f_log = ctk.CTkFrame(c4, fg_color="transparent")
+        self.f_ag = ctk.CTkScrollableFrame(c4, fg_color="transparent", corner_radius=0)
         self.log = ctk.CTkTextbox(
-            c4, height=90, corner_radius=RAIO, border_width=0, fg_color=CARD,
+            self.f_log, height=90, corner_radius=RAIO, border_width=0, fg_color=CARD,
             text_color=MUTED, font=fonte(12), wrap="word", state="disabled",
         )
-        self.log.pack(fill="both", expand=True, padx=MARGEM - 4, pady=(0, 12))
+        self.log.pack(fill="both", expand=True)
         self.log.tag_config("ok", foreground=VERDE)
         self.log.tag_config("erro", foreground=VERMELHO)
         self.log.tag_config("hora", foreground="#5A6072")
+        self._aba_direita("log")
         self._botao_estado()
 
     # ----------------------------------------------------------- utilidades
@@ -612,6 +654,8 @@ class App(ctk.CTk):
                         self._escrever("TikTok requires you to review and confirm each post. Check the options and click Post.")
                     else:
                         self._postar()
+                elif tipo == "agendados":
+                    self._desenhar_agendados()
                 elif tipo == "fim":
                     self.modo_agendado = False
                     self._botao_estado()
@@ -662,6 +706,7 @@ class App(ctk.CTk):
             lbl.configure(text_color=VERDE if feito.get(nome) else MUTED)
 
     def _tic(self):
+        self._desenhar_agendados()
         if not self.ativos:
             self._atualizar_previa()
         self._atualizar_status()
@@ -711,7 +756,7 @@ class App(ctk.CTk):
             self.previa.configure(text="Choose at least one platform.")
         else:
             self.previa.configure(
-                text="\n".join(linhas) + "\nKeep the app open and the computer on until then."
+                text="\n".join(linhas) + "\nGoes to the Scheduled tab. Keep the app open and the computer on until then."
             )
 
     def _guardar_preferencias(self):
@@ -891,19 +936,14 @@ class App(ctk.CTk):
         descricao = ai.sem_hashtags(self.descricao_final.get("1.0", "end"))
         hashtags = self._hashtags_finais(self._get_hashtags())
         legenda = f"{titulo}\n\n{descricao}\n\n{' '.join(hashtags)}".strip()
-        agendar = bool(self.sw_agenda.get())
-
-        planos = []
-        for nome in escolhidas:
-            try:
-                planos.append((nome, agenda.proximo_pico(nome) if agendar else None))
-            except Exception as e:
-                messagebox.showerror("Peak time", str(e))
-                return
+        if self.sw_agenda.get():
+            self._agendar(escolhidas, video, titulo, descricao, hashtags, legenda)
+            return
+        planos = [(nome, None) for nome in escolhidas]
 
         self._guardar_preferencias()
         self.cancelar.clear()
-        self.modo_agendado = agendar
+        self.modo_agendado = False
         with self.lock:
             self.ativos = len(planos)
         self._botao_estado()
@@ -912,56 +952,53 @@ class App(ctk.CTk):
                 target=self._tarefa, args=(nome, alvo, video, titulo, descricao, hashtags, legenda), daemon=True
             ).start()
 
-    def _tarefa(self, nome, alvo, video, titulo, descricao, hashtags, legenda):
+    def _publicar(self, nome, cfg, video, titulo, descricao, hashtags, legenda, opcoes, log):
+        """Envia o vídeo para uma plataforma (compactando se precisar). Devolve a mensagem de sucesso."""
         arquivo, temporario = video, False
-        conta = self.cfg.get("conta_ativa", "")
         try:
-            if alvo:
-                agenda.evitar_suspensao(True)
-                self._escrever(f"{nome}: scheduled for {agenda.descrever(alvo)}.")
-                if not agenda.esperar(alvo, self.cancelar, lambda t: self._escrever(f"{nome}: {t}")):
-                    self._escrever(f"{nome}: schedule canceled.")
-                    return
-            self._escrever(f"{nome}: posting to account '{conta}'...")
-            log = lambda m: self._escrever(m)  # noqa: E731
-            if nome != "Instagram Reels" and self.cfg.get("prefs", {}).get("compactar", True):
+            if nome != "Instagram Reels" and cfg.get("prefs", {}).get("compactar", True):
                 arquivo, temporario = compactar.ajustar(video, compactar.LIMITES_MB[nome], log, nome)
             if nome == "YouTube Shorts":
-                r = uploaders.postar_youtube(self.cfg, arquivo, titulo, descricao, hashtags, log)
-            elif nome == "Instagram Reels":
-                r = uploaders.postar_instagram(self.cfg, video, legenda, log)
-            else:
-                capa_ms = None
-                if self.cfg.get("capa_ia", True):
-                    log("TikTok: AI is choosing the cover...")
-                    capa_ms = capa.escolher(self.cfg.get("gemini_api_key", ""), video, titulo, log)
-                try:
-                    r = uploaders.postar_tiktok(self.cfg, arquivo, legenda, log, capa_ms, self._opcoes_tiktok)
-                except RuntimeError as e:
-                    if "picture_size_check_failed" not in str(e):
-                        raise
-                    # o TikTok não gostou do arquivo: refaz num formato padrão e tenta uma vez mais, sem capa escolhida
-                    refeito = compactar.normalizar(video, log, nome)
-                    if not refeito:
-                        raise
-                    if temporario:
-                        try:
-                            os.remove(arquivo)
-                        except OSError:
-                            pass
-                    arquivo, temporario = refeito, True
-                    r = uploaders.postar_tiktok(self.cfg, arquivo, legenda, log, None, self._opcoes_tiktok)
-            self._escrever(f"OK {nome}: {r}")
-        except Exception as e:
-            self._escrever(f"FAILED {nome}: {e}")
+                return uploaders.postar_youtube(cfg, arquivo, titulo, descricao, hashtags, log)
+            if nome == "Instagram Reels":
+                return uploaders.postar_instagram(cfg, video, legenda, log)
+            capa_ms = None
+            if cfg.get("capa_ia", True):
+                log("TikTok: AI is choosing the cover...")
+                capa_ms = capa.escolher(cfg.get("gemini_api_key", ""), video, titulo, log)
+            try:
+                return uploaders.postar_tiktok(cfg, arquivo, legenda, log, capa_ms, opcoes)
+            except RuntimeError as e:
+                if "picture_size_check_failed" not in str(e):
+                    raise
+                # o TikTok não gostou do arquivo: refaz num formato padrão e tenta uma vez mais, sem capa escolhida
+                refeito = compactar.normalizar(video, log, nome)
+                if not refeito:
+                    raise
+                if temporario:
+                    try:
+                        os.remove(arquivo)
+                    except OSError:
+                        pass
+                arquivo, temporario = refeito, True
+                return uploaders.postar_tiktok(cfg, arquivo, legenda, log, None, opcoes)
         finally:
             if temporario:
                 try:
                     os.remove(arquivo)
                 except OSError:
                     pass
-            if alvo:
-                agenda.evitar_suspensao(False)
+
+    def _tarefa(self, nome, alvo, video, titulo, descricao, hashtags, legenda):
+        conta = self.cfg.get("conta_ativa", "")
+        try:
+            self._escrever(f"{nome}: posting to account '{conta}'...")
+            r = self._publicar(nome, self.cfg, video, titulo, descricao, hashtags, legenda,
+                               self._opcoes_tiktok, self._escrever)
+            self._escrever(f"OK {nome}: {r}")
+        except Exception as e:
+            self._escrever(f"FAILED {nome}: {e}")
+        finally:
             with self.lock:
                 self.ativos -= 1
                 ultimo = self.ativos == 0
@@ -973,6 +1010,264 @@ class App(ctk.CTk):
                 self._escrever("Finished.")
                 self.fila.put(("fim", None))
 
+    # ------------------------------------------------- fila do horário de pico
+    @staticmethod
+    def _dt(ts):
+        return datetime.fromtimestamp(ts, agenda.FUSO) if agenda.FUSO else datetime.fromtimestamp(ts)
+
+    def _salvar_agendados(self):
+        with self._ag_lock:
+            try:
+                tmp = self._ag_arquivo + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(self.agendados, f, indent=1, ensure_ascii=False, default=str)
+                os.replace(tmp, self._ag_arquivo)
+            except Exception:
+                pass
+
+    def _cfg_da_conta(self, conta):
+        """Configurações com os dados da conta que agendou. Se for a conta ativa, o próprio dicionário do app."""
+        if conta == self.cfg.get("conta_ativa") or conta not in self.cfg.get("contas", {}):
+            return self.cfg, True
+        snap = dict(self.cfg)
+        for k in CHAVES_CONTA:
+            snap.pop(k, None)
+        snap.update(self.cfg["contas"][conta])
+        return snap, False
+
+    def _agendar(self, plataformas, video, titulo, descricao, hashtags, legenda):
+        """Põe o vídeo na fila do horário de pico e libera o editor para o próximo."""
+        alvos = {}
+        for nome in plataformas:
+            try:
+                alvos[nome] = agenda.proximo_pico(nome)
+            except Exception as e:
+                messagebox.showerror("Peak time", str(e))
+                return
+        self._guardar_preferencias()
+        item = {
+            "id": str(int(time.time() * 1000)), "video": video, "nome": os.path.basename(video),
+            "titulo": titulo, "descricao": descricao, "hashtags": list(hashtags), "legenda": legenda,
+            "conta": self.cfg.get("conta_ativa", ""), "tiktok": self._opcoes_tiktok, "criado": time.time(),
+            "plataformas": {n: {"alvo": a.timestamp(), "estado": "waiting", "msg": ""} for n, a in alvos.items()},
+        }
+        with self._ag_lock:
+            self.agendados.insert(0, item)
+            del self.agendados[40:]
+        self._salvar_agendados()
+        for n, a in alvos.items():
+            self._escrever(f"{n}: scheduled for {agenda.descrever(a)}.")
+            self._iniciar_espera(item["id"], n)
+        self._limpar_editor()
+        self._aba_direita("ag")
+
+    def _limpar_editor(self):
+        """Depois de agendar: editor vazio, pronto para o próximo vídeo."""
+        self.video = ""
+        self.video_duracao = None
+        self._opcoes_tiktok = None
+        self.btn_video.configure(text="Choose video...")
+        self.info_video.configure(text="Accepts mp4, mov, m4v, webm and mkv.", text_color=MUTED)
+        try:
+            self.miniatura.pack_forget()
+        except Exception:
+            pass
+        self.titulo.set("")
+        self.desc.delete("1.0", "end")
+        self.descricao_final.delete("1.0", "end")
+        self._set_hashtags("")
+        self._atualizar_previa()
+
+    def _iniciar_espera(self, id_, nome):
+        ev = threading.Event()
+        self._ag_cancel[(id_, nome)] = ev
+        threading.Thread(target=self._tarefa_agendada, args=(id_, nome, ev), daemon=True).start()
+
+    def _achar_item(self, id_):
+        with self._ag_lock:
+            for it in self.agendados:
+                if it["id"] == id_:
+                    return it
+        return None
+
+    def _contar_espera(self, delta):
+        with self._ag_lock:
+            self._esperando = max(0, self._esperando + delta)
+            agenda.evitar_suspensao(self._esperando > 0)  # o computador não dorme enquanto há algo na fila
+
+    def _marcar(self, item, nome, estado, msg=""):
+        with self._ag_lock:
+            item["plataformas"][nome]["estado"] = estado
+            item["plataformas"][nome]["msg"] = msg
+        self._salvar_agendados()
+        self.fila.put(("agendados", None))
+
+    def _tarefa_agendada(self, id_, nome, ev):
+        item = self._achar_item(id_)
+        if not item:
+            return
+        log = self._escrever
+        self._contar_espera(1)
+        try:
+            alvo = self._dt(item["plataformas"][nome]["alvo"])
+            if not agenda.esperar(alvo, ev, lambda t: log(f"{nome} ({item['nome']}): {t}")):
+                self._marcar(item, nome, "canceled")
+                log(f"{nome}: schedule canceled for {item['nome']}.")
+                return
+            if not os.path.exists(item["video"]):
+                self._marcar(item, nome, "failed", "video file not found")
+                log(f"FAILED {nome}: the video file {item['nome']} is not there anymore.")
+                return
+            self._marcar(item, nome, "posting")
+            cfg, ativa = self._cfg_da_conta(item["conta"])
+            try:
+                log(f"{nome}: posting '{item['nome']}' to account '{item['conta']}'...")
+                r = self._publicar(nome, cfg, item["video"], item["titulo"], item["descricao"], item["hashtags"],
+                                   item["legenda"], item.get("tiktok"), log)
+                log(f"OK {nome}: {r}")
+                self._marcar(item, nome, "done", str(r)[:200])
+            except Exception as e:
+                log(f"FAILED {nome}: {e}")
+                self._marcar(item, nome, "failed", str(e)[:200])
+            finally:
+                with self.lock:
+                    try:
+                        if not ativa:
+                            self.cfg["contas"][item["conta"]] = {k: cfg[k] for k in CHAVES_CONTA if k in cfg}
+                        self._gravar()  # guarda tokens renovados
+                    except Exception:
+                        pass
+        finally:
+            self._contar_espera(-1)
+
+    def _cancelar_agendado(self, id_):
+        item = self._achar_item(id_)
+        if not item:
+            return
+        for nome, info in item["plataformas"].items():
+            if info["estado"] == "waiting":
+                ev = self._ag_cancel.get((id_, nome))
+                if ev:
+                    ev.set()
+                else:
+                    self._marcar(item, nome, "canceled")
+
+    def _limpar_finalizados(self):
+        with self._ag_lock:
+            self.agendados = [
+                it for it in self.agendados
+                if any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values())
+            ]
+        self._salvar_agendados()
+        self._desenhar_agendados()
+
+    def _retomar_agendados(self):
+        """Ao abrir o app: continua a fila que ficou salva. O que perdeu o horário vai para o próximo pico."""
+        try:
+            with open(self._ag_arquivo, encoding="utf-8") as f:
+                self.agendados = json.load(f)[:40]
+        except Exception:
+            self.agendados = []
+        agora = time.time()
+        for item in self.agendados:
+            for nome, info in item.get("plataformas", {}).items():
+                if info.get("estado") == "posting":
+                    info["estado"], info["msg"] = "failed", "interrupted when the app closed; check the platform"
+                elif info.get("estado") == "waiting":
+                    if not os.path.exists(item.get("video", "")):
+                        info["estado"], info["msg"] = "failed", "video file not found"
+                        continue
+                    if info["alvo"] < agora:
+                        try:
+                            novo = agenda.proximo_pico(nome)
+                            info["alvo"] = novo.timestamp()
+                            self._escrever(f"{nome}: '{item['nome']}' missed its time while the app was closed. "
+                                           f"Moved to {agenda.descrever(novo)}.")
+                        except Exception:
+                            info["estado"], info["msg"] = "failed", "could not find the next peak time"
+                            continue
+                    self._iniciar_espera(item["id"], nome)
+        self._salvar_agendados()
+        self._desenhar_agendados()
+
+    def _aba_direita(self, nome):
+        self._aba = nome
+        ativo = {"fg_color": ACENTO_SUAVE, "text_color": "#D3D5FF", "hover_color": ACENTO_SUAVE}
+        inativo = {"fg_color": "transparent", "text_color": MUTED, "hover_color": CARD2}
+        self.btn_aba_log.configure(**(ativo if nome == "log" else inativo))
+        self.btn_aba_ag.configure(**(ativo if nome == "ag" else inativo))
+        self.f_log.pack_forget()
+        self.f_ag.pack_forget()
+        if nome == "log":
+            self.f_log.pack(fill="both", expand=True, padx=MARGEM - 4, pady=(0, 12))
+        else:
+            self.f_ag.pack(fill="both", expand=True, padx=MARGEM - 8, pady=(0, 12))
+        self._desenhar_agendados()
+
+    def _desenhar_agendados(self):
+        with self._ag_lock:
+            itens = list(self.agendados)
+        esperando = sum(
+            1 for it in itens if any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values())
+        )
+        self.btn_aba_ag.configure(text=f"Scheduled · {esperando}" if esperando else "Scheduled")
+        if self._aba != "ag":
+            return
+        for w in self.f_ag.winfo_children():
+            w.destroy()
+        if not itens:
+            ctk.CTkLabel(
+                self.f_ag, text="Nothing scheduled yet.\nTurn on “Post at peak US time” and click Schedule.\n"
+                "The app stays free for more videos.", font=fonte(12), text_color=MUTED, justify="left", anchor="w",
+            ).pack(anchor="w", padx=8, pady=10)
+            return
+        curto = {"YouTube Shorts": "YouTube", "Instagram Reels": "Instagram", "TikTok": "TikTok"}
+        for it in itens:
+            ativo = any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values())
+            cartao = ctk.CTkFrame(self.f_ag, fg_color=CARD2, corner_radius=RAIO, border_width=1, border_color=BORDA)
+            cartao.pack(fill="x", pady=(0, 8), padx=2)
+            topo = ctk.CTkFrame(cartao, fg_color="transparent")
+            topo.pack(fill="x", padx=12, pady=(10, 0))
+            if ativo:
+                ctk.CTkButton(
+                    topo, text="Cancel", width=62, height=26, corner_radius=8, fg_color="transparent",
+                    border_width=1, border_color=BORDA, hover_color="#2A1519", text_color=VERMELHO,
+                    font=fonte(11), command=lambda i=it["id"]: self._cancelar_agendado(i),
+                ).pack(side="right")
+            titulo = it.get("titulo", "") or it["nome"]
+            ctk.CTkLabel(
+                topo, text=titulo if len(titulo) <= 34 else titulo[:33] + "…", font=fonte_t(12),
+                text_color=TEXTO, anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                cartao, text=f"{nome_curto(it['nome'], 36)}  ·  {it.get('conta', '')}", font=fonte(10),
+                text_color=MUTED, anchor="w",
+            ).pack(fill="x", padx=12, pady=(0, 6))
+            for nome, info in it["plataformas"].items():
+                est = info["estado"]
+                dt = self._dt(info["alvo"])
+                if est == "waiting":
+                    txt, cor = f"{agenda._fmt(dt)} NY  ·  in {agenda.faltam(dt)}", MUTED
+                elif est == "posting":
+                    txt, cor = "posting now...", "#A5A7FF"
+                elif est == "done":
+                    txt, cor = "posted ✓", VERDE
+                elif est == "canceled":
+                    txt, cor = "canceled", MUTED
+                else:
+                    txt, cor = f"failed: {info.get('msg', '')}"[:60], VERMELHO
+                linha = ctk.CTkFrame(cartao, fg_color="transparent")
+                linha.pack(fill="x", padx=12, pady=(0, 3))
+                ctk.CTkLabel(linha, text=curto.get(nome, nome), font=fonte_t(11), text_color=TEXTO, width=76,
+                             anchor="w").pack(side="left")
+                ctk.CTkLabel(linha, text=txt, font=fonte(11), text_color=cor, anchor="w").pack(side="left")
+            ctk.CTkFrame(cartao, fg_color="transparent", height=6).pack()
+        if any(not any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values()) for it in itens):
+            ctk.CTkButton(
+                self.f_ag, text="Clear finished", height=28, corner_radius=RAIO, fg_color="transparent",
+                border_width=1, border_color=BORDA, hover_color=CARD2, text_color=MUTED, font=fonte(11),
+                command=self._limpar_finalizados,
+            ).pack(anchor="e", pady=(2, 0), padx=2)
 
     # ------------------------------------------------------- clipes automáticos
     def _iniciar_clipes(self):
@@ -1130,6 +1425,7 @@ class App(ctk.CTk):
             except Exception:
                 self._dlg_clipes = None
         j = ctk.CTkToplevel(self, fg_color=BG)
+        self._estilizar_janela(j)
         self._dlg_clipes = j
         j.title("Clips")
         j.geometry("620x780")
@@ -1309,16 +1605,17 @@ class App(ctk.CTk):
     # -------------------------------------------------------- configurações
     def _config(self):
         j = ctk.CTkToplevel(self, fg_color=BG)
+        self._estilizar_janela(j)
         j.title(f"Settings  ·  account: {self.cfg['conta_ativa']}")
         j.geometry("520x780")
         j.transient(self)
         j.after(150, j.lift)
 
         abas = ctk.CTkTabview(
-            j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA,
+            j, fg_color=BG, corner_radius=RAIO_CARTAO, border_width=0,
             segmented_button_selected_color=ACENTO, segmented_button_selected_hover_color=ACENTO_HOVER,
-            segmented_button_unselected_color=CARD2, segmented_button_unselected_hover_color=BORDA,
-            segmented_button_fg_color=CARD2, text_color=TEXTO,
+            segmented_button_unselected_color=CARD, segmented_button_unselected_hover_color=CARD2,
+            segmented_button_fg_color=CARD, text_color=TEXTO,
         )
         abas.pack(fill="both", expand=True, padx=16, pady=(16, 8))
         campos = {}
@@ -1489,14 +1786,21 @@ class App(ctk.CTk):
             self._atualizar_contas_conectadas()
             j.destroy()
 
+        ctk.CTkLabel(
+            a, text=f"Current account:  {self.cfg['conta_ativa']}", font=fonte_t(15), text_color=TEXTO, anchor="w",
+        ).pack(fill="x", padx=6, pady=(18, 0))
         ctk.CTkButton(
-            a, text="Rename this account", height=34, corner_radius=RAIO, border_width=1, fg_color="transparent",
-            border_color=BORDA, hover_color=CARD2, text_color=TEXTO, font=fonte(12), command=renomear,
-        ).pack(fill="x", padx=6, pady=(14, 0))
+            a, text="Rename this account", height=38, corner_radius=RAIO, fg_color=CARD2, hover_color=BORDA,
+            text_color=TEXTO, font=fonte_t(12), command=renomear,
+        ).pack(fill="x", padx=6, pady=(10, 0))
+        ctk.CTkFrame(a, height=1, fg_color=BORDA).pack(fill="x", padx=6, pady=(28, 12))
+        ctk.CTkLabel(
+            a, text="Danger zone", font=fonte_t(10), text_color=VERMELHO, anchor="w",
+        ).pack(fill="x", padx=6)
         ctk.CTkButton(
-            a, text="Remove this account", height=34, corner_radius=RAIO, border_width=1, fg_color="transparent",
-            border_color=PERIGO, hover_color="#3A1F22", text_color="#F0A0A6", font=fonte(12), command=remover,
-        ).pack(fill="x", padx=6, pady=(8, 0))
+            a, text="Remove this account", height=34, corner_radius=RAIO, fg_color="transparent",
+            hover_color="#2A1519", text_color=VERMELHO, font=fonte(12), anchor="w", command=remover,
+        ).pack(fill="x", padx=6, pady=(6, 0))
 
         def guardar():
             for chave, w in campos.items():
