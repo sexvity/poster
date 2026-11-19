@@ -98,3 +98,32 @@ def normalizar(video, log=None, nome=""):
         _log(log, f"{nome}: could not re-encode the video.")
         return None
     return saida
+
+
+def vertical(video, log=None, nome=""):
+    """Converte um vídeo horizontal (16:9) em vertical 9:16 (1080x1920): o vídeo original fica no centro,
+    com o fundo desfocado preenchendo o resto. Devolve (caminho, é_temporário); se já for vertical, devolve o próprio."""
+    inf = capa.informacoes(video)
+    if inf and inf[2] >= inf[1]:
+        return video, False
+    ffmpeg = capa._ffmpeg()
+    if not ffmpeg:
+        return video, False
+    saida = os.path.join(tempfile.gettempdir(), f"vertical_{os.getpid()}_{int(time.time() * 1000)}.mp4")
+    _log(log, f"{nome}: converting to vertical 9:16 with a blurred background...")
+    filtro = (
+        "[0:v]split=2[a][b];"
+        "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30:5[fundo];"
+        "[b]scale=1080:-2[frente];"
+        "[fundo][frente]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[v]"
+    )
+    r = subprocess.run(
+        [ffmpeg, "-y", "-i", video, "-filter_complex", filtro, "-map", "[v]", "-map", "0:a?", "-r", "30",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", f"{AUDIO_KBPS}k",
+         "-ar", "44100", "-ac", "2", "-movflags", "+faststart", "-map_metadata", "-1", saida],
+        capture_output=True, timeout=3600, creationflags=_SEM_JANELA,
+    )
+    if r.returncode != 0 or not os.path.exists(saida) or os.path.getsize(saida) == 0:
+        _log(log, f"{nome}: could not convert to vertical; using the original.")
+        return video, False
+    return saida, True

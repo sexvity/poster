@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import webbrowser
 from datetime import datetime
 from tkinter import filedialog, messagebox
@@ -26,6 +27,7 @@ os.chdir(BASE)
 import agenda  # noqa: E402
 import ai  # noqa: E402
 import capa  # noqa: E402
+import clipes  # noqa: E402
 import compactar  # noqa: E402
 from painel_tiktok import PainelTikTok  # noqa: E402
 import tiktok_auth  # noqa: E402
@@ -34,22 +36,23 @@ import uploaders  # noqa: E402
 CONFIG = "config.json"
 PLATAFORMAS = ["YouTube Shorts", "Instagram Reels", "TikTok"]
 
-# Paleta: tudo escuro, um único destaque
-BG = "#0D0F14"
-CARD = "#14171D"
-CARD2 = "#1B1F27"
-BORDA = "#262B35"
-TEXTO = "#E8EAF0"
-MUTED = "#8B91A1"
-ACENTO = "#6366F1"
-ACENTO_HOVER = "#4F52D9"
-ACENTO_SUAVE = "#23264A"
+# Paleta: quase preto, bordas discretas e um único destaque
+BG = "#0A0B0F"
+CARD = "#101218"
+CARD2 = "#161922"
+BORDA = "#1F2330"
+TEXTO = "#ECEEF4"
+MUTED = "#7C8394"
+ACENTO = "#6D6FF5"
+ACENTO_HOVER = "#5B5DE0"
+ACENTO_SUAVE = "#1C1F3F"
 VERDE = "#3FB68B"
 AMBAR = "#E0A23B"
 VERMELHO = "#E5646E"
 PERIGO = "#B4474F"
 PERIGO_HOVER = "#963A41"
 FAMILIA = "Segoe UI"
+FAMILIA_TITULO = "Segoe UI"  # trocada por "Proxima Nova" (ou parecida) se estiver instalada no computador
 
 # Dados que pertencem a cada conta (o resto, como a chave do Gemini e as chaves dos apps, é compartilhado)
 CHAVES_CONTA = [
@@ -59,15 +62,35 @@ CHAVES_CONTA = [
 ]
 NOVA_CONTA = "＋  Add account..."
 
-RAIO = 10  # cantos de botões e campos
-RAIO_CARTAO = 14
-MARGEM = 16  # espaço lateral dentro dos cartões
+RAIO = 12  # cantos de botões e campos
+RAIO_CARTAO = 20
+MARGEM = 20  # espaço lateral dentro dos cartões
 
 ctk.set_appearance_mode("dark")
 
 
 def fonte(tam=13, peso="normal"):
     return ctk.CTkFont(family=FAMILIA, size=tam, weight=peso)
+
+
+def fonte_t(tam=13):
+    """Fonte de destaque (títulos e botões principais): Proxima Nova Bold quando disponível."""
+    return ctk.CTkFont(family=FAMILIA_TITULO, size=tam, weight="bold")
+
+
+def escolher_fontes():
+    """Proxima Nova é paga e não vem com o Windows: se o usuário a tiver instalada, o app usa; senão, uma parecida."""
+    global FAMILIA_TITULO
+    try:
+        from tkinter import font as _tkfont
+
+        instaladas = {f.lower(): f for f in _tkfont.families()}
+        for candidata in ("proxima nova", "proxima nova bold", "montserrat", "gotham", "avenir next", "segoe ui semibold"):
+            if candidata in instaladas:
+                FAMILIA_TITULO = instaladas[candidata]
+                return
+    except Exception:
+        pass
 
 
 def carregar():
@@ -103,8 +126,8 @@ class Chip(ctk.CTkButton):
 
     def __init__(self, master, texto, ligado, ao_mudar):
         super().__init__(
-            master, text=texto, height=32, corner_radius=16, border_width=1,
-            font=fonte(12, "bold"), command=self._alternar,
+            master, text=texto, height=34, corner_radius=17, border_width=1,
+            font=fonte_t(12), command=self._alternar,
         )
         self.ligado = ligado
         self._ao_mudar = ao_mudar
@@ -126,6 +149,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__(fg_color=BG)
         self.title("YTK SHORTS")
+        escolher_fontes()
         try:
             self.iconbitmap(os.path.join(RECURSOS, "ytk.ico"))
             # reforço: ícone em PNG de alta resolução (barra de tarefas nítida)
@@ -135,8 +159,9 @@ class App(ctk.CTk):
             self.after(300, lambda: self.iconphoto(True, self._icone_tk))
         except Exception:
             pass
-        self.geometry("1020x740")
-        self.minsize(920, 680)
+        self.after(350, self._icone_windows)
+        self.geometry("1080x780")
+        self.minsize(960, 700)
         self.cfg = carregar()
         self._iniciar_contas()
         self._dlg_link = None
@@ -156,8 +181,36 @@ class App(ctk.CTk):
         self._atualizar_previa()
         self._atualizar_status()
         self._atualizar_contas_conectadas()
+        self._iniciar_clipes()
         self.after(150, self._ler_fila)
         self.after(30000, self._tic)
+
+    def _icone_windows(self):
+        """Entrega ao Windows o ícone grande e o pequeno nos tamanhos exatos que ele vai desenhar (barra de tarefas,
+        Alt+Tab, título da janela). Sem isso ele estica um tamanho só e o ícone fica borrado."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            u = ctypes.windll.user32
+            u.LoadImageW.restype = wintypes.HANDLE
+            u.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int,
+                                     ctypes.c_int, wintypes.UINT]
+            u.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            u.SendMessageW.restype = wintypes.LPARAM
+            hwnd = u.GetParent(self.winfo_id()) or self.winfo_id()
+            caminho = os.path.join(RECURSOS, "ytk.ico")
+            self._hicons = []
+            for tipo, metrica in ((1, 11), (0, 49)):  # ICON_BIG / SM_CXICON, ICON_SMALL / SM_CXSMICON
+                px = max(16, u.GetSystemMetrics(metrica))
+                h = u.LoadImageW(None, caminho, 1, px, px, 0x10)  # IMAGE_ICON, LR_LOADFROMFILE
+                if h:
+                    self._hicons.append(h)
+                    u.SendMessageW(hwnd, 0x80, tipo, h)  # WM_SETICON
+        except Exception:
+            pass
 
     # ------------------------------------------------------ login no navegador
     def _dialogo_link(self, url, nome):
@@ -170,7 +223,7 @@ class App(ctk.CTk):
         j.resizable(False, False)
         j.transient(self)
         j.after(100, j.lift)
-        ctk.CTkLabel(j, text=f"Sign in to {nome}", font=fonte(16, "bold"), text_color=TEXTO).pack(
+        ctk.CTkLabel(j, text=f"Sign in to {nome}", font=fonte_t(16), text_color=TEXTO).pack(
             anchor="w", padx=22, pady=(20, 2))
         ctk.CTkLabel(
             j, text="How do you want to open the sign-in link? Use \"Copy link\" if the right account is signed in on another browser.",
@@ -196,7 +249,7 @@ class App(ctk.CTk):
         linha.pack(fill="x", padx=22)
         ctk.CTkButton(
             linha, text="Open in default browser", height=38, corner_radius=RAIO, fg_color=ACENTO,
-            hover_color=ACENTO_HOVER, text_color="white", font=fonte(13, "bold"), command=abrir,
+            hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(13), command=abrir,
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             linha, text="Copy link", height=38, corner_radius=RAIO, border_width=1, fg_color="transparent",
@@ -285,28 +338,25 @@ class App(ctk.CTk):
     # ------------------------------------------------------------ peças de UI
     def _cartao(self, pai, expandir=False):
         c = ctk.CTkFrame(pai, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA)
-        c.pack(fill="both" if expandir else "x", expand=expandir, pady=(0, 12))
+        c.pack(fill="both" if expandir else "x", expand=expandir, pady=(0, 14))
         return c
 
     def _rotulo(self, pai, texto, topo=12):
         ctk.CTkLabel(
-            pai, text=texto, font=fonte(11, "bold"), text_color=MUTED, anchor="w",
-        ).pack(fill="x", padx=MARGEM + 2, pady=(topo, 5))
+            pai, text=texto, font=fonte_t(10), text_color=MUTED, anchor="w",
+        ).pack(fill="x", padx=MARGEM + 2, pady=(topo, 6))
 
     def _passo(self, pai, numero, texto, topo=16):
         """Título do cartão com um número em círculo: deixa claro a ordem (1, 2, 3)."""
         linha = ctk.CTkFrame(pai, fg_color="transparent")
         linha.pack(fill="x", padx=MARGEM, pady=(topo, 8))
-        ctk.CTkLabel(
-            linha, text=str(numero), width=22, height=22, corner_radius=11, fg_color=ACENTO_SUAVE,
-            text_color="#C9CCFF", font=fonte(11, "bold"),
-        ).pack(side="left")
-        ctk.CTkLabel(linha, text=texto, font=fonte(13, "bold"), text_color=TEXTO).pack(side="left", padx=(8, 0))
+        ctk.CTkLabel(linha, text=f"{numero:02d}", font=fonte_t(12), text_color=ACENTO).pack(side="left")
+        ctk.CTkLabel(linha, text=texto, font=fonte_t(16), text_color=TEXTO).pack(side="left", padx=(10, 0))
         return linha
 
     def _entrada(self, pai, var=None):
         e = ctk.CTkEntry(
-            pai, textvariable=var, height=38, corner_radius=RAIO, border_width=1,
+            pai, textvariable=var, height=42, corner_radius=RAIO, border_width=1,
             fg_color=CARD2, border_color=BORDA, text_color=TEXTO, font=fonte(13),
         )
         e.pack(fill="x", padx=MARGEM, pady=(0, 2))
@@ -326,32 +376,37 @@ class App(ctk.CTk):
 
         # Topo
         topo = ctk.CTkFrame(self, fg_color="transparent")
-        topo.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 10))
+        topo.grid(row=0, column=0, sticky="ew", padx=28, pady=(20, 12))
         try:
             from PIL import Image as _Img
 
             _logo = _Img.open(os.path.join(RECURSOS, "ytk.png")).convert("RGBA")
-            self._logo_img = ctk.CTkImage(light_image=_logo, dark_image=_logo, size=(52, 52))
-            ctk.CTkLabel(topo, text="", image=self._logo_img, width=52, height=52).pack(side="left")
+            self._logo_img = ctk.CTkImage(light_image=_logo, dark_image=_logo, size=(46, 46))
+            ctk.CTkLabel(topo, text="", image=self._logo_img, width=46, height=46).pack(side="left")
         except Exception:
             ctk.CTkLabel(
                 topo, text="▶", width=34, height=34, corner_radius=10, fg_color=ACENTO, text_color="white",
-                font=fonte(15, "bold"),
+                font=fonte_t(15),
             ).pack(side="left")
         textos = ctk.CTkFrame(topo, fg_color="transparent")
         textos.pack(side="left", padx=(12, 0))
-        ctk.CTkLabel(textos, text="YTK SHORTS", font=fonte(18, "bold"), text_color=TEXTO, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(textos, text="YTK SHORTS", font=fonte_t(21), text_color=TEXTO, anchor="w").pack(anchor="w")
         ctk.CTkLabel(
             textos, text="English captions and posting for a US audience",
             font=fonte(11), text_color=MUTED, anchor="w",
         ).pack(anchor="w")
         ctk.CTkButton(
-            topo, text="Settings", width=112, height=30, corner_radius=RAIO, border_width=1,
+            topo, text="Settings", width=96, height=34, corner_radius=RAIO, border_width=1,
             fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=MUTED,
-            font=fonte(12), command=self._config,
+            font=fonte_t(12), command=self._config,
         ).pack(side="right")
+        ctk.CTkButton(
+            topo, text="Clips", width=80, height=34, corner_radius=RAIO, border_width=1,
+            fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=MUTED,
+            font=fonte_t(12), command=self._dialogo_clipes,
+        ).pack(side="right", padx=(0, 8))
         self.menu_conta = ctk.CTkOptionMenu(
-            topo, values=list(self.cfg["contas"]) + [NOVA_CONTA], command=self._trocar_conta, width=150, height=30,
+            topo, values=list(self.cfg["contas"]) + [NOVA_CONTA], command=self._trocar_conta, width=150, height=34,
             corner_radius=RAIO, fg_color=CARD2, button_color=BORDA, button_hover_color="#2F3541",
             dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE, text_color=TEXTO, font=fonte(12),
             dropdown_font=fonte(12),
@@ -367,23 +422,23 @@ class App(ctk.CTk):
 
         # Duas colunas
         corpo = ctk.CTkFrame(self, fg_color="transparent")
-        corpo.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        corpo.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 10))
         corpo.grid_columnconfigure((0, 1), weight=1, uniform="col")
         corpo.grid_rowconfigure(0, weight=1)
         # a coluna esquerda rola (o painel do TikTok a deixa mais alta que a janela)
         esq = ctk.CTkScrollableFrame(
             corpo, fg_color="transparent", scrollbar_button_color=BORDA, scrollbar_button_hover_color="#2F3541",
         )
-        esq.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        esq.grid(row=0, column=0, sticky="nsew", padx=(0, 9))
         self.esq = esq
         dire = ctk.CTkFrame(corpo, fg_color="transparent")
-        dire.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        dire.grid(row=0, column=1, sticky="nsew", padx=(9, 0))
 
         # ---- Coluna esquerda: vídeo + publicação
         c1 = self._cartao(esq, expandir=True)
         self._passo(c1, 1, "Video and topic")
         self.btn_video = ctk.CTkButton(
-            c1, text="Choose video...", height=44, corner_radius=RAIO, border_width=1, anchor="w",
+            c1, text="Choose video...", height=48, corner_radius=RAIO, border_width=1, anchor="w",
             fg_color=CARD2, hover_color="#232834", border_color=BORDA, text_color=TEXTO,
             font=fonte(13), command=self._escolher,
         )
@@ -403,9 +458,9 @@ class App(ctk.CTk):
             "<MouseWheel>", lambda e: (self.esq._parent_canvas.yview_scroll(int(-e.delta / 120), "units"), "break")[1]
         )
         self.btn_gerar = ctk.CTkButton(
-            c1, text="Generate text", height=42, corner_radius=RAIO, border_width=1,
-            fg_color=ACENTO_SUAVE, hover_color="#2D3160", border_color=ACENTO, text_color="#C9CCFF",
-            font=fonte(13, "bold"), command=self._gerar,
+            c1, text="Generate text", height=46, corner_radius=RAIO, border_width=1,
+            fg_color=ACENTO_SUAVE, hover_color="#262A55", border_color=ACENTO, text_color="#D3D5FF",
+            font=fonte_t(13), command=self._gerar,
         )
         self.btn_gerar.pack(fill="x", padx=MARGEM, pady=(8, MARGEM))
 
@@ -468,7 +523,7 @@ class App(ctk.CTk):
         self._passo(c2, 2, "Post text")
         cab = ctk.CTkFrame(c2, fg_color="transparent")
         cab.pack(fill="x", padx=MARGEM + 2, pady=(0, 5))
-        ctk.CTkLabel(cab, text="TITLE", font=fonte(11, "bold"), text_color=MUTED).pack(side="left")
+        ctk.CTkLabel(cab, text="TITLE", font=fonte_t(10), text_color=MUTED).pack(side="left")
         self.cont_titulo = ctk.CTkLabel(cab, text="0/70", font=fonte(11), text_color=MUTED)
         self.cont_titulo.pack(side="right")
         self.titulo = ctk.StringVar()
@@ -482,8 +537,8 @@ class App(ctk.CTk):
         ctk.CTkFrame(c2, height=MARGEM - 2, fg_color="transparent").pack()
 
         self.btn_postar = ctk.CTkButton(
-            dire, text="Post now", height=46, corner_radius=RAIO, fg_color=ACENTO,
-            hover_color=ACENTO_HOVER, text_color="white", font=fonte(15, "bold"), command=self._postar,
+            dire, text="Post now", height=52, corner_radius=14, fg_color=ACENTO,
+            hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(16), command=self._postar,
         )
         self.btn_postar.pack(fill="x", pady=(0, 8))
         self.barra = ctk.CTkProgressBar(
@@ -493,7 +548,7 @@ class App(ctk.CTk):
         self.barra.set(0)
 
         c4 = self._cartao(dire, expandir=True)
-        self._rotulo(c4, "ACTIVITY", 14)
+        self._rotulo(c4, "ACTIVITY", 16)
         self.log = ctk.CTkTextbox(
             c4, height=90, corner_radius=RAIO, border_width=0, fg_color=CARD,
             text_color=MUTED, font=fonte(12), wrap="word", state="disabled",
@@ -675,19 +730,22 @@ class App(ctk.CTk):
             filetypes=[("Videos", "*.mp4 *.mov *.m4v *.webm *.mkv"), ("All files", "*.*")]
         )
         if caminho:
-            self.video = caminho
-            mb = os.path.getsize(caminho) / (1024 * 1024)
-            self.btn_video.configure(text=f"{nome_curto(caminho)}   ·   {mb:.0f} MB")
-            self.info_video.configure(text="Reading video...", text_color=MUTED)
+            self._definir_video(caminho)
 
-            def ler():
-                inf = capa.informacoes(caminho)
-                quadros = capa.extrair_quadros(caminho, 1, 480)
-                self.after(0, lambda: self._mostrar_info(caminho, inf))
-                if quadros:
-                    self.after(0, lambda: self._mostrar_miniatura(caminho, quadros[0][1]))
+    def _definir_video(self, caminho):
+        self.video = caminho
+        mb = os.path.getsize(caminho) / (1024 * 1024)
+        self.btn_video.configure(text=f"{nome_curto(caminho)}   ·   {mb:.0f} MB")
+        self.info_video.configure(text="Reading video...", text_color=MUTED)
 
-            threading.Thread(target=ler, daemon=True).start()
+        def ler():
+            inf = capa.informacoes(caminho)
+            quadros = capa.extrair_quadros(caminho, 1, 480)
+            self.after(0, lambda: self._mostrar_info(caminho, inf))
+            if quadros:
+                self.after(0, lambda: self._mostrar_miniatura(caminho, quadros[0][1]))
+
+        threading.Thread(target=ler, daemon=True).start()
 
     def _mostrar_miniatura(self, caminho, b64):
         """Prévia do vídeo que vai ser postado (um quadro, em tamanho pequeno)."""
@@ -915,6 +973,339 @@ class App(ctk.CTk):
                 self._escrever("Finished.")
                 self.fila.put(("fim", None))
 
+
+    # ------------------------------------------------------- clipes automáticos
+    def _iniciar_clipes(self):
+        """Vigia a pasta de clipes (de outro programa) e posta sozinho no YouTube/Instagram."""
+        self.hist = clipes.Historico()
+        self.fila_clipes = queue.Queue()
+        self._dlg_clipes = None
+        self.vigia = clipes.Vigia(self.hist, lambda: self.cfg, self._clipe_novo)
+        self.vigia.start()
+        threading.Thread(target=self._trabalhador_clipes, daemon=True).start()
+
+    def _clipe_novo(self, caminho):
+        self._escrever(f"New clip found: {os.path.basename(caminho)}")
+        self.fila_clipes.put(caminho)
+
+    def _trabalhador_clipes(self):
+        while True:
+            caminho = self.fila_clipes.get()
+            try:
+                self._processar_clipe(caminho)
+            except Exception as e:
+                self.hist.atualizar(caminho, estado="falhou", erro=str(e)[:300])
+                self._escrever(f"FAILED clip {os.path.basename(caminho)}: {e}")
+            time.sleep(4)  # respiro entre clipes (a IA gratuita tem limite por minuto)
+
+    def _processar_clipe(self, caminho):
+        nome = os.path.basename(caminho)
+        cfg = self.cfg
+        if not cfg.get("clipes_ativo"):
+            clipes.esquecer(self.hist, caminho)  # desligado enquanto esperava: será visto de novo ao religar
+            return
+        if not os.path.exists(caminho):
+            clipes.esquecer(self.hist, caminho)
+            return
+        inf = capa.informacoes(caminho)
+        if not inf:
+            raise RuntimeError("could not read the video file")
+        dur = inf[0]
+        if dur < 3 or dur > 180:
+            self.hist.atualizar(caminho, estado="ignorado", erro=f"length {dur:.0f}s is outside 3s-3min")
+            self._escrever(f"Clip {nome}: skipped (shorts must be between 3 seconds and 3 minutes).")
+            return
+        log = self._escrever
+        self.hist.atualizar(caminho, estado="processando")
+        log(f"Clip {nome}: watching it to write the text...")
+        quadros = [b for _, b in capa.extrair_quadros(caminho, 6)]
+        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome, quadros=quadros)
+        titulo_ = ai.sem_hashtags(res["titulo"])
+        descricao = ai.sem_hashtags(res["descricao"])
+        hashtags = self._hashtags_finais(" ".join(res["hashtags"]))
+        legenda = f"{titulo_}\n\n{descricao}\n\n{' '.join(hashtags)}".strip()
+        self.hist.atualizar(caminho, titulo=titulo_, descricao=descricao, hashtags=hashtags)
+
+        auto = [p for p in ("YouTube Shorts", "Instagram Reels") if p in cfg.get("clipes_auto", [])]
+        quer_tiktok = bool(cfg.get("clipes_tiktok"))
+        arquivo, temporario = caminho, False
+        if (auto or quer_tiktok) and cfg.get("clipes_vertical", True):
+            arquivo, temporario = compactar.vertical(caminho, log, "Clip")
+        resultados = {}
+        try:
+            for plataforma in auto:
+                resultados[plataforma] = self._postar_clipe(plataforma, caminho, arquivo, titulo_, descricao, hashtags, legenda)
+            pronto = ""
+            if quer_tiktok:
+                pronto = caminho
+                if temporario:  # guarda o vertical para o TikTok: o temporário seria apagado
+                    pasta = os.path.join(BASE, "ready_for_tiktok")
+                    os.makedirs(pasta, exist_ok=True)
+                    pronto = os.path.join(pasta, os.path.splitext(nome)[0] + "_9x16.mp4")
+                    shutil.copy2(arquivo, pronto)
+        finally:
+            if temporario:
+                try:
+                    os.remove(arquivo)
+                except OSError:
+                    pass
+        feitos = [p for p, r in resultados.items() if r.startswith("OK")]
+        if quer_tiktok:
+            estado = "pronto_tiktok"
+            log(f"Clip {nome}: ready for TikTok. Open the Clips window and click 'Open in editor' to review and post.")
+        elif auto and not feitos:
+            estado = "falhou"
+        else:
+            estado = "postado"
+        self.hist.atualizar(caminho, estado=estado, resultados=resultados, pronto=pronto)
+
+    def _postar_clipe(self, plataforma, original, arquivo, titulo_, descricao, hashtags, legenda):
+        """Posta um clipe numa plataforma respeitando o limite por dia e o intervalo. Devolve 'OK ...' ou o motivo."""
+        cfg = self.cfg
+        limite = int(cfg.get("clipes_limite_dia", 3) or 0)
+        intervalo = int(cfg.get("clipes_intervalo_min", 60) or 0)
+        log = self._escrever
+        while True:
+            espera = self.hist.espera_para_postar(plataforma, limite, intervalo)
+            if espera is None:
+                log(f"{plataforma}: daily limit of {limite} reached, skipping this clip.")
+                return "skipped: daily limit"
+            if espera <= 0:
+                break
+            if not cfg.get("clipes_ativo"):
+                return "skipped: watcher turned off"
+            log(f"{plataforma}: waiting {int(espera // 60) + 1} min before the next post...")
+            time.sleep(min(espera, 300))
+        compactado, temp2 = arquivo, False
+        try:
+            if plataforma == "YouTube Shorts":
+                if cfg.get("prefs", {}).get("compactar", True):
+                    compactado, temp2 = compactar.ajustar(arquivo, compactar.LIMITES_MB[plataforma], log, plataforma)
+                r = uploaders.postar_youtube(cfg, compactado, titulo_, descricao, hashtags, log)
+            else:
+                r = uploaders.postar_instagram(cfg, arquivo, legenda, log)
+            self.hist.registrar_postagem(plataforma)
+            log(f"OK {plataforma}: {r}")
+            return f"OK {r}"
+        except Exception as e:
+            log(f"FAILED {plataforma}: {e}")
+            return f"failed: {str(e)[:150]}"
+        finally:
+            if temp2:
+                try:
+                    os.remove(compactado)
+                except OSError:
+                    pass
+            with self.lock:
+                try:
+                    self._gravar()
+                except Exception:
+                    pass
+
+    def _carregar_clip(self, caminho):
+        """Põe um clipe pronto no editor principal para revisar e postar no TikTok."""
+        dados = self.hist.get(caminho)
+        arquivo = dados.get("pronto") or caminho
+        if not os.path.exists(arquivo):
+            messagebox.showwarning("File missing", "The clip file is not there anymore.")
+            return
+        self._definir_video(arquivo)
+        self.titulo.set(dados.get("titulo", ""))
+        self.descricao_final.delete("1.0", "end")
+        self.descricao_final.insert("1.0", dados.get("descricao", ""))
+        self._set_hashtags(" ".join(dados.get("hashtags", [])))
+        for nome, chip in self.chips.items():
+            chip.ligado = nome == "TikTok"
+            chip._pintar()
+        self._atualizar_previa()
+        self.lift()
+        self.focus_force()
+        self._escrever(f"Clip loaded in the editor: {os.path.basename(caminho)}")
+
+    def _dialogo_clipes(self):
+        if self._dlg_clipes is not None:
+            try:
+                self._dlg_clipes.lift()
+                return
+            except Exception:
+                self._dlg_clipes = None
+        j = ctk.CTkToplevel(self, fg_color=BG)
+        self._dlg_clipes = j
+        j.title("Clips")
+        j.geometry("620x780")
+        j.minsize(560, 640)
+        j.transient(self)
+
+        def fechar():
+            self._dlg_clipes = None
+            j.destroy()
+
+        j.protocol("WM_DELETE_WINDOW", fechar)
+
+        def guardar(chave, valor):
+            self.cfg[chave] = valor
+            self._gravar()
+
+        ctk.CTkLabel(j, text="Clips", font=fonte_t(22), text_color=TEXTO, anchor="w").pack(
+            fill="x", padx=24, pady=(20, 0))
+        ctk.CTkLabel(
+            j, text="Point to the folder where your clip app saves videos. New clips get a caption, a vertical "
+                    "version and are posted for you.",
+            font=fonte(12), text_color=MUTED, anchor="w", justify="left", wraplength=560,
+        ).pack(fill="x", padx=24, pady=(2, 12))
+
+        cartao = ctk.CTkFrame(j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA)
+        cartao.pack(fill="x", padx=20)
+
+        linha = ctk.CTkFrame(cartao, fg_color="transparent")
+        linha.pack(fill="x", padx=MARGEM, pady=(16, 6))
+        pasta_var = ctk.StringVar(value=self.cfg.get("clipes_pasta", ""))
+        ctk.CTkEntry(
+            linha, textvariable=pasta_var, height=40, corner_radius=RAIO, border_width=1, fg_color=CARD2,
+            border_color=BORDA, text_color=TEXTO, font=fonte(12), state="readonly",
+            placeholder_text="No folder chosen",
+        ).pack(side="left", fill="x", expand=True)
+
+        def escolher_pasta():
+            p = filedialog.askdirectory(title="Folder where your clips are saved")
+            if p:
+                guardar("clipes_pasta", p)
+                pasta_var.set(p)
+                if sw_ativo.get():
+                    ligar()
+
+        ctk.CTkButton(
+            linha, text="Browse", width=90, height=40, corner_radius=RAIO, fg_color=CARD2, hover_color="#232834",
+            border_width=1, border_color=BORDA, text_color=TEXTO, font=fonte_t(12), command=escolher_pasta,
+        ).pack(side="left", padx=(8, 0))
+
+        def ligar():
+            pasta = self.cfg.get("clipes_pasta", "")
+            if not pasta or not os.path.isdir(pasta):
+                messagebox.showwarning("Folder", "Choose the clips folder first.")
+                sw_ativo.deselect()
+                guardar("clipes_ativo", False)
+                return
+            if not self.cfg.get("clipes_baseline") == pasta:
+                n = clipes.marcar_existentes(self.hist, pasta, bool(self.cfg.get("clipes_subpastas")))
+                guardar("clipes_baseline", pasta)
+                self._escrever(f"Watching {pasta}. {n} existing clip(s) will be ignored; only new ones are posted.")
+            guardar("clipes_ativo", True)
+
+        def alternar_ativo():
+            if sw_ativo.get():
+                ligar()
+            else:
+                guardar("clipes_ativo", False)
+                self._escrever("Clip watcher turned off.")
+
+        def interruptor(texto, chave, padrao=False, comando=None):
+            sw = ctk.CTkSwitch(
+                cartao, text=texto, font=fonte(13), text_color=TEXTO, progress_color=ACENTO,
+                button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+                command=comando or (lambda: guardar(chave, bool(sw.get()))),
+            )
+            sw.pack(anchor="w", padx=MARGEM + 2, pady=(8, 2))
+            if self.cfg.get(chave, padrao):
+                sw.select()
+            return sw
+
+        sw_ativo = interruptor("Watch this folder and post new clips", "clipes_ativo", False, alternar_ativo)
+        interruptor("Include subfolders", "clipes_subpastas", False)
+        interruptor("Make horizontal clips vertical (9:16, blurred background)", "clipes_vertical", True)
+
+        ctk.CTkLabel(cartao, text="POST AUTOMATICALLY TO", font=fonte_t(10), text_color=MUTED, anchor="w").pack(
+            fill="x", padx=MARGEM + 2, pady=(14, 4))
+        auto_atual = list(self.cfg.get("clipes_auto", ["YouTube Shorts"]))
+        caixas = {}
+
+        def mudou_auto():
+            guardar("clipes_auto", [p for p, c in caixas.items() if c.get()])
+
+        for p in ("YouTube Shorts", "Instagram Reels"):
+            c = ctk.CTkCheckBox(
+                cartao, text=p, font=fonte(13), text_color=TEXTO, fg_color=ACENTO, hover_color=ACENTO_HOVER,
+                border_color=BORDA, command=mudou_auto,
+            )
+            c.pack(anchor="w", padx=MARGEM + 2, pady=3)
+            if p in auto_atual:
+                c.select()
+            caixas[p] = c
+        interruptor("Get clips ready for TikTok (you review and post each one)", "clipes_tiktok", False)
+        ctk.CTkLabel(
+            cartao, text="TikTok requires you to confirm every post, so those clips wait for you in the list below.",
+            font=fonte(11), text_color=MUTED, anchor="w", justify="left", wraplength=540,
+        ).pack(fill="x", padx=MARGEM + 4, pady=(0, 6))
+
+        limites = ctk.CTkFrame(cartao, fg_color="transparent")
+        limites.pack(fill="x", padx=MARGEM, pady=(8, 16))
+
+        def numero(rotulo, chave, padrao):
+            col = ctk.CTkFrame(limites, fg_color="transparent")
+            col.pack(side="left", padx=(0, 16))
+            ctk.CTkLabel(col, text=rotulo, font=fonte_t(10), text_color=MUTED, anchor="w").pack(anchor="w")
+            var = ctk.StringVar(value=str(self.cfg.get(chave, padrao)))
+
+            def salvar_num(*_):
+                try:
+                    guardar(chave, max(0, int(var.get())))
+                except ValueError:
+                    pass
+
+            var.trace_add("write", salvar_num)
+            ctk.CTkEntry(
+                col, textvariable=var, width=120, height=36, corner_radius=RAIO, border_width=1, fg_color=CARD2,
+                border_color=BORDA, text_color=TEXTO, font=fonte(13),
+            ).pack(pady=(4, 0))
+
+        numero("MAX POSTS PER DAY (EACH SITE)", "clipes_limite_dia", 3)
+        numero("MINUTES BETWEEN POSTS", "clipes_intervalo_min", 60)
+
+        ctk.CTkLabel(j, text="RECENT CLIPS", font=fonte_t(10), text_color=MUTED, anchor="w").pack(
+            fill="x", padx=26, pady=(16, 4))
+        lista = ctk.CTkScrollableFrame(
+            j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA,
+            scrollbar_button_color=BORDA, scrollbar_button_hover_color="#2F3541",
+        )
+        lista.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+        ROTULOS = {
+            "na_fila": ("Waiting", MUTED), "processando": ("Working...", AMBAR), "postado": ("Posted", VERDE),
+            "pronto_tiktok": ("Ready for TikTok", ACENTO), "falhou": ("Failed", VERMELHO),
+            "ignorado": ("Skipped", MUTED),
+        }
+
+        def desenhar():
+            if self._dlg_clipes is not j:
+                return
+            for w in lista.winfo_children():
+                w.destroy()
+            itens = self.hist.lista(30)
+            if not itens:
+                ctk.CTkLabel(lista, text="No clips yet. New videos that appear in the folder will show up here.",
+                             font=fonte(12), text_color=MUTED, wraplength=480, justify="left").pack(padx=12, pady=16)
+            for caminho, d in itens:
+                linha = ctk.CTkFrame(lista, fg_color="transparent")
+                linha.pack(fill="x", padx=8, pady=3)
+                txt, cor = ROTULOS.get(d.get("estado"), (d.get("estado", ""), MUTED))
+                ctk.CTkLabel(linha, text=nome_curto(caminho, 30), font=fonte(12), text_color=TEXTO, anchor="w").pack(
+                    side="left")
+                if d.get("estado") == "pronto_tiktok":
+                    ctk.CTkButton(
+                        linha, text="Done", width=54, height=28, corner_radius=8, fg_color="transparent",
+                        border_width=1, border_color=BORDA, text_color=MUTED, hover_color=CARD2, font=fonte(11),
+                        command=lambda c=caminho: (self.hist.atualizar(c, estado="postado"), desenhar()),
+                    ).pack(side="right", padx=(6, 0))
+                    ctk.CTkButton(
+                        linha, text="Open in editor", width=104, height=28, corner_radius=8, fg_color=ACENTO,
+                        hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(11),
+                        command=lambda c=caminho: self._carregar_clip(c),
+                    ).pack(side="right", padx=(6, 0))
+                ctk.CTkLabel(linha, text=txt, font=fonte_t(11), text_color=cor).pack(side="right", padx=(8, 4))
+            j.after(4000, desenhar)
+
+        desenhar()
+
     # -------------------------------------------------------- configurações
     def _config(self):
         j = ctk.CTkToplevel(self, fg_color=BG)
@@ -1030,7 +1421,7 @@ class App(ctk.CTk):
         ctk.CTkButton(
             a, text="Connect to TikTok", height=36, corner_radius=RAIO, fg_color=ACENTO_SUAVE,
             hover_color="#2D3160", border_width=1, border_color=ACENTO, text_color="#C9CCFF",
-            font=fonte(13, "bold"), command=conectar_tiktok,
+            font=fonte_t(13), command=conectar_tiktok,
         ).pack(fill="x", padx=6, pady=(14, 0))
         def desconectar_tiktok():
             for k in ("tiktok_client_key", "tiktok_client_secret"):
@@ -1118,9 +1509,16 @@ class App(ctk.CTk):
 
         ctk.CTkButton(
             j, text="Save", height=42, corner_radius=RAIO, fg_color=ACENTO, hover_color=ACENTO_HOVER,
-            text_color="white", font=fonte(14, "bold"), command=guardar,
+            text_color="white", font=fonte_t(14), command=guardar,
         ).pack(fill="x", padx=16, pady=(0, 16))
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        try:  # identidade própria: a barra de tarefas usa o ícone do YTK SHORTS e não o do Python
+            import ctypes
+
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("YTK.Shorts.App")
+        except Exception:
+            pass
     App().mainloop()
