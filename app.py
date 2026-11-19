@@ -182,6 +182,8 @@ class App(ctk.CTk):
         self._ag_cancel = {}
         self._esperando = 0
         self._aba = "log"
+        self._slot_sel = {}  # horário de pico escolhido por plataforma
+        self._slots_sig = None
         self._ag_arquivo = os.path.join(BASE, "agendados.json")
         self._montar()
         self._atualizar_previa()
@@ -523,6 +525,7 @@ class App(ctk.CTk):
         self.sw_agenda.pack(anchor="w", padx=MARGEM + 2, pady=(12, 4))
         if self.prefs.get("agendar"):
             self.sw_agenda.select()
+        self.slots_box = ctk.CTkFrame(c3, fg_color="transparent", width=1, height=1)
         self.previa = ctk.CTkLabel(
             c3, text="", font=fonte(11), text_color=MUTED, anchor="w", justify="left", wraplength=380,
         )
@@ -743,21 +746,69 @@ class App(ctk.CTk):
         self._botao_estado()
         if not self.sw_agenda.get():
             self.previa.configure(text="Posts as soon as you click the button.")
+            self._desenhar_slots([])
             return
-        linhas = []
-        for nome in PLATAFORMAS:
-            if self.chips[nome].ligado:
-                try:
-                    alvo = agenda.proximo_pico(nome)
-                    linhas.append(f"{nome}: {agenda.descrever(alvo)} (in {agenda.faltam(alvo)})")
-                except Exception as e:
-                    linhas.append(f"{nome}: {e}")
-        if not linhas:
+        plats = [n for n in PLATAFORMAS if self.chips[n].ligado]
+        if not plats:
             self.previa.configure(text="Choose at least one platform.")
-        else:
-            self.previa.configure(
-                text="\n".join(linhas) + "\nGoes to the Scheduled tab. Keep the app open and the computer on until then."
+            self._desenhar_slots([])
+            return
+        self.previa.configure(
+            text="Pick the peak time for each platform. The video goes to the Scheduled tab; "
+            "keep the app open and the computer on until then."
+        )
+        self._desenhar_slots(plats)
+
+    def _ocupados(self, nome):
+        """Horários já usados por outros vídeos que esperam nessa plataforma."""
+        with self._ag_lock:
+            return {
+                int(i["alvo"]) for it in self.agendados for n, i in it["plataformas"].items()
+                if n == nome and i["estado"] == "waiting"
+            }
+
+    def _desenhar_slots(self, plats):
+        """Um seletor de horário de pico por plataforma (só os horários que ainda estão livres)."""
+        dados = {}
+        try:
+            for n in plats:
+                dados[n] = agenda.proximos_picos(n, 12, ocupados=self._ocupados(n))
+        except Exception as e:
+            self.previa.configure(text=str(e))
+            dados = {}
+        sig = tuple((n, tuple(int(d.timestamp()) for d in v)) for n, v in dados.items())
+        if sig == self._slots_sig:
+            return
+        self._slots_sig = sig
+        for w in self.slots_box.winfo_children():
+            w.destroy()
+        if not dados:
+            self.slots_box.pack_forget()
+            return
+        self.slots_box.pack(fill="x", padx=MARGEM + 4, pady=(2, 4), before=self.previa)
+        curto = {"YouTube Shorts": "YouTube", "Instagram Reels": "Instagram", "TikTok": "TikTok"}
+        for n, lista in dados.items():
+            if not lista:
+                ctk.CTkLabel(self.slots_box, text=f"{curto[n]}: no free peak time in the next 3 weeks.",
+                             font=fonte(11), text_color=AMBAR, anchor="w").pack(fill="x")
+                continue
+            rotulos = {}
+            for i, d in enumerate(lista):
+                r = ("Next free  ·  " if i == 0 else "") + f"{agenda._fmt(d)} NY  ·  {agenda._fmt(d.astimezone())} you"
+                rotulos[r] = d.timestamp()
+            atual = next((r for r, t in rotulos.items() if t == self._slot_sel.get(n)), next(iter(rotulos)))
+            self._slot_sel[n] = rotulos[atual]
+            linha = ctk.CTkFrame(self.slots_box, fg_color="transparent")
+            linha.pack(fill="x", pady=(0, 6))
+            ctk.CTkLabel(linha, text=curto[n], font=fonte_t(11), text_color=TEXTO, width=68, anchor="w").pack(side="left")
+            menu = ctk.CTkOptionMenu(
+                linha, values=list(rotulos), height=30, corner_radius=10, fg_color=CARD2, button_color=BORDA,
+                button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+                text_color=TEXTO, font=fonte(11), dropdown_font=fonte(11),
+                command=lambda v, n=n, r=rotulos: self._slot_sel.__setitem__(n, r[v]),
             )
+            menu.set(atual)
+            menu.pack(side="left", fill="x", expand=True)
 
     def _guardar_preferencias(self):
         self.prefs = {
@@ -1040,10 +1091,16 @@ class App(ctk.CTk):
         alvos = {}
         for nome in plataformas:
             try:
-                alvos[nome] = agenda.proximo_pico(nome)
+                livres = agenda.proximos_picos(nome, 12, ocupados=self._ocupados(nome))
             except Exception as e:
                 messagebox.showerror("Peak time", str(e))
                 return
+            if not livres:
+                messagebox.showinfo("Peak time", f"{nome}: no free peak time in the next 3 weeks.")
+                return
+            escolha = self._slot_sel.get(nome)
+            ts = {d.timestamp() for d in livres}
+            alvos[nome] = self._dt(escolha if escolha in ts else livres[0].timestamp())
         self._guardar_preferencias()
         item = {
             "id": str(int(time.time() * 1000)), "video": video, "nome": os.path.basename(video),
@@ -1058,6 +1115,8 @@ class App(ctk.CTk):
         for n, a in alvos.items():
             self._escrever(f"{n}: scheduled for {agenda.descrever(a)}.")
             self._iniciar_espera(item["id"], n)
+        self._slot_sel.clear()
+        self._slots_sig = None
         self._limpar_editor()
         self._aba_direita("ag")
 
@@ -1179,7 +1238,7 @@ class App(ctk.CTk):
                         continue
                     if info["alvo"] < agora:
                         try:
-                            novo = agenda.proximo_pico(nome)
+                            novo = agenda.proximos_picos(nome, 1, ocupados=self._ocupados(nome))[0]
                             info["alvo"] = novo.timestamp()
                             self._escrever(f"{nome}: '{item['nome']}' missed its time while the app was closed. "
                                            f"Moved to {agenda.descrever(novo)}.")

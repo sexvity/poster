@@ -47,6 +47,25 @@ def proximo_pico(plataforma, agora=None):
     return min(achados)
 
 
+def proximos_picos(plataforma, qtd=8, agora=None, ocupados=()):
+    """Próximos horários de pico livres (datetimes), em ordem. `ocupados` = timestamps já usados por outros vídeos."""
+    if FUSO is None:
+        raise RuntimeError("The tzdata package is missing. Run iniciar.bat again to install it.")
+    agora = (agora or datetime.now(FUSO)).astimezone(FUSO)
+    limite = (agora + timedelta(minutes=2)).astimezone(timezone.utc)
+    usados = {int(t) for t in ocupados}
+    achados = []
+    for d in range(0, 22):
+        dia = (agora + timedelta(days=d)).date()
+        for wd, h, m in PICOS[plataforma]:
+            if dia.weekday() == wd:
+                alvo = datetime(dia.year, dia.month, dia.day, h, m, tzinfo=FUSO)
+                if alvo.astimezone(timezone.utc) > limite and int(alvo.timestamp()) not in usados:
+                    achados.append(alvo)
+    achados.sort()
+    return achados[:qtd]
+
+
 def _fmt(dt):
     return f"{DIAS[dt.weekday()]} {dt:%H:%M}"
 
