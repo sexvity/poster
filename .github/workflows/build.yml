@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -r requirements.txt pyinstaller
-      - run: python -m PyInstaller --onefile --windowed --name "YTK-SHORTS" --icon ytk.ico --add-data "ytk.ico;." --collect-all customtkinter --collect-submodules PIL --collect-all imageio_ffmpeg --collect-data googleapiclient --collect-data tzdata app.py
+      - run: python -m PyInstaller --onefile --windowed --name "YTK-SHORTS" --icon ytk.ico --add-data "ytk.ico;." --add-data "ytk.png;." --collect-all customtkinter ... --collect-submodules PIL --collect-all imageio_ffmpeg --collect-data googleapiclient --collect-data tzdata app.py
       - uses: actions/upload-artifact@v4
         with:
           name: YTK-SHORTS
