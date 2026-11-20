@@ -763,14 +763,16 @@ class App(ctk.CTk):
             self.previa.configure(text="Posts as soon as you click the button.")
             self._desenhar_slots([])
             return
-        plats = [n for n in PLATAFORMAS if self.chips[n].ligado]
+        plats = [n for n in PLATAFORMAS if self.chips[n].ligado and n != "TikTok"]
+        tiktok = self.chips["TikTok"].ligado
+        aviso_tt = "\nTikTok can't be scheduled: it needs your confirmation on each post. Turn this switch off to post to TikTok." if tiktok else ""
         if not plats:
-            self.previa.configure(text="Choose at least one platform.")
+            self.previa.configure(text=("Choose YouTube or Instagram to schedule." if not tiktok else "") + aviso_tt.strip())
             self._desenhar_slots([])
             return
         self.previa.configure(
             text="Pick the peak time for each platform. The video goes to the Scheduled tab; "
-            "keep the app open and the computer on until then."
+            "keep the app open and the computer on until then." + aviso_tt
         )
         self._desenhar_slots(plats)
 
@@ -991,6 +993,13 @@ class App(ctk.CTk):
         if not escolhidas:
             messagebox.showwarning("No platform", "Select at least one platform.")
             return
+        if self.sw_agenda.get() and "TikTok" in escolhidas:
+            messagebox.showinfo(
+                "TikTok can't be scheduled",
+                "TikTok requires you to review and confirm each post when you publish it.\n\n"
+                "Turn off 'Post at peak US time' to post to TikTok now, or unselect TikTok to schedule the others.",
+            )
+            return
         self._opcoes_tiktok = None
         if "TikTok" in escolhidas:
             try:
@@ -1112,6 +1121,7 @@ class App(ctk.CTk):
 
     def _agendar(self, plataformas, video, titulo, descricao, hashtags, legenda):
         """Põe o vídeo na fila do horário de pico e libera o editor para o próximo."""
+        plataformas = [n for n in plataformas if n != "TikTok"]
         alvos = {}
         for nome in plataformas:
             try:
@@ -1256,6 +1266,8 @@ class App(ctk.CTk):
             for nome, info in item.get("plataformas", {}).items():
                 if info.get("estado") == "posting":
                     info["estado"], info["msg"] = "failed", "interrupted when the app closed; check the platform"
+                elif info.get("estado") == "waiting" and nome == "TikTok":
+                    info["estado"], info["msg"] = "canceled", "TikTok posts can't be scheduled"
                 elif info.get("estado") == "waiting":
                     if not os.path.exists(item.get("video", "")):
                         info["estado"], info["msg"] = "failed", "video file not found"
