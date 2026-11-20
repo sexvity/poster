@@ -85,13 +85,15 @@ def postar_youtube(cfg, video, titulo, descricao, hashtags, log=None):
             try:
                 try:
                     creds = InstalledAppFlow.from_client_secrets_file(segredo, escopos).run_local_server(
-                        port=0, browser=_nav_do_app("YouTube"), success_message=_PAGINA_FIM)
+                        port=0, browser=_nav_do_app("YouTube"), success_message=_PAGINA_FIM,
+                        prompt="select_account consent")
                 except Exception as e:  # noqa: BLE001
                     if "scope" not in str(e).lower():
                         raise
                     # o projeto do Google não liberou o escopo de leitura: autoriza só o envio
                     creds = InstalledAppFlow.from_client_secrets_file(segredo, escopos[:1]).run_local_server(
-                        port=0, browser=_nav_do_app("YouTube"), success_message=_PAGINA_FIM)
+                        port=0, browser=_nav_do_app("YouTube"), success_message=_PAGINA_FIM,
+                        prompt="select_account consent")
             finally:
                 if FECHAR_LINK:
                     FECHAR_LINK()

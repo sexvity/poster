@@ -58,7 +58,7 @@ FAMILIA_TITULO = "Segoe UI"  # trocada por "Proxima Nova" (ou parecida) se estiv
 CHAVES_CONTA = [
     "instagram_user_id", "instagram_access_token",
     "tiktok_access_token", "tiktok_refresh_token", "tiktok_privacidade",
-    "youtube_token_file",
+    "youtube_token_file", "youtube_client_secret",
 ]
 NOVA_CONTA = "＋  Add account..."
 
@@ -300,6 +300,10 @@ class App(ctk.CTk):
     def _iniciar_contas(self):
         """Garante a lista de contas. Na primeira vez, as configurações atuais viram a conta 'Principal'."""
         contas = self.cfg.setdefault("contas", {})
+        plano = self.cfg.get("youtube_client_secret", "")
+        if contas and plano and not any("youtube_client_secret" in d for d in contas.values()):
+            # versão antiga: a chave do YouTube era única; passa a ser de cada conta (fica só na primeira)
+            contas["Principal" if "Principal" in contas else next(iter(contas))]["youtube_client_secret"] = plano
         if not contas:
             principal = {k: self.cfg[k] for k in CHAVES_CONTA if k in self.cfg}
             principal.setdefault("youtube_token_file", "youtube_token.json")  # o arquivo que já existe
@@ -1732,6 +1736,24 @@ class App(ctk.CTk):
         ).pack(anchor="w", padx=6, pady=(8, 0))
         opcoes(a, "youtube_privacidade", "Privacy", ["public", "unlisted", "private"], "public")
         ajuda(a, "Until Google verifies your project, videos are uploaded as private.")
+        ajuda(a, f"Each account has its own YouTube settings. This is for account '{self.cfg['conta_ativa']}': "
+                 "choose the client_secret.json and sign in with the Google account of its channel.")
+
+        def sair_youtube():
+            arq = self.cfg.get("youtube_token_file", "")
+            if arq and os.path.exists(arq):
+                try:
+                    os.remove(arq)
+                except OSError as ex:
+                    messagebox.showerror("YouTube", str(ex))
+                    return
+            self._escrever(f"YouTube: signed out of account '{self.cfg['conta_ativa']}'. The next post asks you to sign in.")
+            self._atualizar_contas_conectadas()
+
+        ctk.CTkButton(
+            a, text="Sign out of YouTube (this account)", height=34, corner_radius=RAIO, fg_color=CARD2,
+            hover_color=BORDA, text_color=TEXTO, font=fonte_t(12), command=sair_youtube,
+        ).pack(fill="x", padx=6, pady=(14, 0))
 
         a = abas.add("Instagram")
         campo(a, "instagram_user_id", "Professional account ID")
