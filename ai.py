@@ -1,4 +1,4 @@
-"""Geração de título, descrição e hashtags em inglês (público dos EUA) com a API gratuita do Gemini."""
+"""Geração de título, descrição e hashtags (inglês dos EUA ou português do Brasil) com a API gratuita do Gemini."""
 import json
 import re
 import time
@@ -18,29 +18,40 @@ def sem_hashtags(texto):
 
 def lista_hashtags(texto):
     """Lê '#a #b a,b' e devolve ['#a', '#b'] sem repetir."""
-    achadas = re.findall(r"[A-Za-z0-9_]+", str(texto))
+    achadas = re.findall(r"\w+", str(texto))
     return list(dict.fromkeys("#" + h.lower() for h in achadas if h))
 
 
 def _limpar_hashtags(lista):
     saida = []
     for h in lista:
-        h = re.sub(r"[^A-Za-z0-9_]", "", str(h)).lower()  # só letras e números, como o público dos EUA usa
+        h = re.sub(r"[^\w]", "", str(h)).lower()  # só letras e números (com acento, se for português)
         if h:
             saida.append("#" + h)
     return list(dict.fromkeys(saida))  # remove repetidas
 
 
-def gerar(api_key, descricao, nome_arquivo="", qtd_hashtags=8, quadros=None):
+def gerar(api_key, descricao, nome_arquivo="", qtd_hashtags=8, quadros=None, idioma="auto", audio=None):
     if not api_key:
         raise RuntimeError("Gemini key missing. Open Settings and paste the key.")
 
-    prompt = f"""You are a short-form video growth strategist for the US market (TikTok, Instagram Reels, YouTube Shorts).
-The audience is American. Write in natural US English, the way Americans actually talk online.
-Use current US slang and cultural references only where they genuinely fit the topic, never forced or cringe.
+    if idioma == "pt":
+        regra_idioma = ("LANGUAGE: write the title, the description and the hashtags in natural Brazilian Portuguese (pt-BR), "
+                        "the way Brazilians talk online. The audience is Brazilian.")
+    elif idioma == "en":
+        regra_idioma = ("LANGUAGE: write in natural US English, the way Americans talk online. The audience is American. "
+                        "The creator's notes may be in Portuguese: understand and adapt them, do not translate word for word.")
+    else:
+        regra_idioma = ("LANGUAGE: decide it from the language actually SPOKEN in the video"
+                        + (" (an audio clip is attached after the frames)" if audio else "")
+                        + " and from text shown on screen. If people speak Brazilian Portuguese, write the title, description and "
+                        "hashtags in natural Brazilian Portuguese (pt-BR) for a Brazilian audience. If they speak English, or there is "
+                        "no speech, write in natural US English for an American audience (the creator's notes may be in Portuguese "
+                        "even for an English video: adapt them, do not translate word for word). Never mix the two languages.")
 
-The creator describes the video below. The description may be in Portuguese: understand it and adapt it for
-an American audience instead of translating word for word.
+    prompt = f"""You are a short-form video growth strategist (TikTok, Instagram Reels, YouTube Shorts).
+{regra_idioma}
+Use current slang and cultural references of that audience only where they genuinely fit the topic, never forced or cringe.
 
 Video description from the creator: {descricao or '(no description)'}
 File name: {nome_arquivo}
@@ -51,13 +62,15 @@ Return:
   Be honest: never promise something the video does not show.
 - "description": 1-2 short sentences with a hook, ending with a question or call to action that invites comments. NO hashtags and no # symbol in it: hashtags go only in the "hashtags" field.
 - "hashtags": exactly {qtd_hashtags} hashtags, lowercase, letters and numbers only, no spaces, no duplicates:
-  2-3 broad high-reach tags that are popular in the US (for example fyp, viral, trending),
-  3-4 niche tags specific to this topic, and 1-2 tags tied to US culture or communities around the topic.
+  2-3 broad high-reach tags popular with that audience (US: fyp, viral, trending; Brazil: fy, viral, brasil),
+  3-4 niche tags specific to this topic, and 1-2 tags tied to the culture or communities around the topic.
 Answer ONLY with JSON: {{"title": "...", "description": "...", "hashtags": ["...", "..."]}}"""
 
     partes = [{"text": prompt}]
     for b64 in quadros or []:
         partes.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
+    if audio and idioma == "auto":
+        partes.append({"inline_data": {"mime_type": "audio/wav", "data": audio}})
     corpo = {
         "contents": [{"parts": partes}],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.8},

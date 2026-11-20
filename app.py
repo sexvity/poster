@@ -58,7 +58,7 @@ FAMILIA_TITULO = "Segoe UI"  # trocada por "Proxima Nova" (ou parecida) se estiv
 CHAVES_CONTA = [
     "instagram_user_id", "instagram_access_token",
     "tiktok_access_token", "tiktok_refresh_token", "tiktok_privacidade",
-    "youtube_token_file", "youtube_client_secret",
+    "youtube_token_file", "youtube_client_secret", "tiktok_client_key", "tiktok_client_secret",
 ]
 NOVA_CONTA = "＋  Add account..."
 
@@ -300,10 +300,11 @@ class App(ctk.CTk):
     def _iniciar_contas(self):
         """Garante a lista de contas. Na primeira vez, as configurações atuais viram a conta 'Principal'."""
         contas = self.cfg.setdefault("contas", {})
-        plano = self.cfg.get("youtube_client_secret", "")
-        if contas and plano and not any("youtube_client_secret" in d for d in contas.values()):
-            # versão antiga: a chave do YouTube era única; passa a ser de cada conta (fica só na primeira)
-            contas["Principal" if "Principal" in contas else next(iter(contas))]["youtube_client_secret"] = plano
+        for chave in ("youtube_client_secret", "tiktok_client_key", "tiktok_client_secret"):
+            plano = self.cfg.get(chave, "")
+            if contas and plano and not any(chave in d for d in contas.values()):
+                # versão antiga: a chave era única; passa a ser de cada conta (fica só na primeira)
+                contas["Principal" if "Principal" in contas else next(iter(contas))][chave] = plano
         if not contas:
             principal = {k: self.cfg[k] for k in CHAVES_CONTA if k in self.cfg}
             principal.setdefault("youtube_token_file", "youtube_token.json")  # o arquivo que já existe
@@ -491,6 +492,16 @@ class App(ctk.CTk):
         self.desc._textbox.bind(
             "<MouseWheel>", lambda e: (self.esq._parent_canvas.yview_scroll(int(-e.delta / 120), "units"), "break")[1]
         )
+        self._rotulo(c1, "TEXT LANGUAGE", 10)
+        self.idiomas = {"Auto (from the video's speech)": "auto", "English (US)": "en", "Português (Brasil)": "pt"}
+        self.menu_idioma = ctk.CTkOptionMenu(
+            c1, values=list(self.idiomas), height=32, corner_radius=RAIO, fg_color=CARD2, button_color=BORDA,
+            button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+            text_color=TEXTO, font=fonte(12), dropdown_font=fonte(12),
+        )
+        self.menu_idioma.set(next((k for k, v in self.idiomas.items() if v == self.prefs.get("idioma", "auto")),
+                                  "Auto (from the video's speech)"))
+        self.menu_idioma.pack(fill="x", padx=MARGEM, pady=(0, 0))
         self.btn_gerar = ctk.CTkButton(
             c1, text="Generate text", height=46, corner_radius=RAIO, border_width=1,
             fg_color=ACENTO_SUAVE, hover_color="#262A55", border_color=ACENTO, text_color="#D3D5FF",
@@ -814,12 +825,19 @@ class App(ctk.CTk):
             menu.set(atual)
             menu.pack(side="left", fill="x", expand=True)
 
+    def _idioma(self):
+        try:
+            return self.idiomas.get(self.menu_idioma.get(), "auto")
+        except Exception:
+            return self.prefs.get("idioma", "auto")
+
     def _guardar_preferencias(self):
         self.prefs = {
             "plataformas": {n: self.chips[n].ligado for n in PLATAFORMAS},
             "agendar": bool(self.sw_agenda.get()),
             "auto": bool(self.sw_auto.get()),
             "compactar": bool(self.sw_compactar.get()),
+            "idioma": self._idioma(),
         }
         self.cfg["prefs"] = self.prefs
         self._gravar()
@@ -903,6 +921,7 @@ class App(ctk.CTk):
         descricao = self.desc.get("1.0", "end").strip()
         nome = os.path.basename(self.video)
         chave = self.cfg.get("gemini_api_key", "")
+        idioma = self._idioma()  # lido aqui, na thread da janela
         self.btn_gerar.configure(state="disabled", text="Generating...")
 
         def tarefa():
@@ -911,7 +930,8 @@ class App(ctk.CTk):
                 quadros = [b for _, b in capa.extrair_quadros(self.video, 6)]
                 if not quadros:
                     self._escrever("Could not extract frames; using only your description.")
-                res = ai.gerar(chave, descricao, nome, quadros=quadros)
+                audio = capa.extrair_audio(self.video) if idioma == "auto" else None
+                res = ai.gerar(chave, descricao, nome, quadros=quadros, idioma=idioma, audio=audio)
                 self.fila.put(("preencher", res))
                 self._escrever("Text generated. Review it and edit if you like.")
                 if depois_postar:
@@ -1377,7 +1397,10 @@ class App(ctk.CTk):
         self.hist.atualizar(caminho, estado="processando")
         log(f"Clip {nome}: watching it to write the text...")
         quadros = [b for _, b in capa.extrair_quadros(caminho, 6)]
-        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome, quadros=quadros)
+        idioma = self.prefs.get("idioma", "auto")
+        audio = capa.extrair_audio(caminho) if idioma == "auto" else None
+        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome, quadros=quadros,
+                       idioma=idioma, audio=audio)
         titulo_ = ai.sem_hashtags(res["titulo"])
         descricao = ai.sem_hashtags(res["descricao"])
         hashtags = self._hashtags_finais(" ".join(res["hashtags"]))

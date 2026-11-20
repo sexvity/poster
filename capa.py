@@ -85,6 +85,29 @@ def extrair_quadros(video, qtd=QUADROS, largura=360):
         shutil.rmtree(pasta, ignore_errors=True)
 
 
+def extrair_audio(video, segundos=60):
+    """Primeiros `segundos` do áudio, mono 16 kHz em WAV (base64), para a IA descobrir o idioma falado. None se não houver."""
+    ffmpeg = _ffmpeg()
+    if not ffmpeg:
+        return None
+    pasta = tempfile.mkdtemp(prefix="audio_")
+    arq = os.path.join(pasta, "a.wav")
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", video, "-t", str(segundos), "-vn", "-ac", "1", "-ar", "16000",
+             "-c:a", "pcm_s16le", arq],
+            capture_output=True, timeout=180, creationflags=_SEM_JANELA,
+        )
+        if os.path.exists(arq) and 20000 < os.path.getsize(arq) < 8_000_000:
+            with open(arq, "rb") as f:
+                return base64.b64encode(f.read()).decode()
+    except Exception:
+        pass
+    finally:
+        shutil.rmtree(pasta, ignore_errors=True)
+    return None
+
+
 def escolher(api_key, video, descricao="", log=None):
     """Devolve o instante (em milissegundos) do melhor quadro, ou None se não der."""
     ffmpeg = _ffmpeg()
