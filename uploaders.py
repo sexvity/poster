@@ -343,13 +343,29 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None):
     _log(log, "Instagram: uploading the video...")
     tamanho = os.path.getsize(video)
     with open(video, "rb") as f:
+        corpo = f.read()  # o arquivo inteiro em memória: corpo simples, sem envio em streaming
+    for tentativa in range(1, 4):
         r = requests.post(
             f"https://rupload.facebook.com/ig-api-upload/{ver}/{container}",
-            headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(tamanho)},
-            data=f,
-            timeout=900,
+            headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(tamanho),
+                     "Content-Type": "application/octet-stream"},
+            data=corpo,
+            timeout=1800,
         )
+        if r.ok:
+            break
+        _log(log, f"Instagram: upload attempt {tentativa}/3 failed: {r.status_code} {r.text[:200]} "
+                  f"[trace {r.headers.get('x-fb-trace-id') or r.headers.get('x-fb-debug') or '-'}]")
+        try:
+            est = requests.get(f"{base}/{container}", params={"fields": "status_code,status,video_status",
+                                                              "access_token": token}, timeout=60)
+            _log(log, f"Instagram: container status: {est.text[:300]}")
+        except Exception:
+            pass
+        if tentativa < 3:
+            time.sleep(10 * tentativa)
     _checar(r)
+    del corpo
 
     _log(log, "Instagram: waiting for processing...")
     for _ in range(72):
