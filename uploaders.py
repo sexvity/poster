@@ -209,16 +209,61 @@ def _preparar_video(video, log=None):
     return saida
 
 
+def _preparar_video_seguro(video, log=None):
+    """Conversão conservadora para quando o Instagram recusa o arquivo (ProcessingFailed): mapeia só 1 vídeo + 1 áudio,
+    remove metadados/rotação, H.264 High 4.0, 30 fps constante, GOP de 2 s, AAC 48 kHz estéreo, até 1080 de largura."""
+    try:
+        import imageio_ffmpeg
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    saida = os.path.join(tempfile.gettempdir(), f"reels_safe_{os.getpid()}_{int(time.time())}.mp4")
+    _log(log, "Instagram: the file was refused, re-encoding with a safer profile and trying again...")
+    cmd = [
+        ffmpeg, "-y", "-i", video, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
+        "-vf", "scale='min(1080,iw)':-2,setsar=1,fps=30,format=yuv420p",
+        "-c:v", "libx264", "-profile:v", "high", "-level", "4.0", "-preset", "medium", "-crf", "22",
+        "-maxrate", "8M", "-bufsize", "16M", "-g", "60", "-bf", "2",
+        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-movflags", "+faststart", "-map_metadata", "-1", "-metadata:s:v", "rotate=0", saida,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=3600,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0 or not os.path.exists(saida) or os.path.getsize(saida) == 0:
+            _log(log, "Instagram: safe re-encode failed. " + r.stderr.decode("utf-8", "ignore")[-200:])
+            return None
+    except Exception as e:
+        _log(log, f"Instagram: safe re-encode failed ({e}).")
+        return None
+    _log(log, f"Instagram: safe version ready ({os.path.getsize(saida) // 1024} KB).")
+    return saida
+
+
 def postar_instagram(cfg, video, legenda, log=None):
     pronto = preparar_instagram(video, log, cfg.get("prefs", {}).get("compactar", True))
+    extra = None
     try:
-        return _postar_instagram_arquivo(cfg, pronto, legenda, log)
+        try:
+            return _postar_instagram_arquivo(cfg, pronto, legenda, log)
+        except RuntimeError as e:
+            txt = str(e)
+            if "ProcessingFailed" not in txt and "processing failed" not in txt.lower() and "rejected the video" not in txt:
+                raise
+            # parte do original (não do já convertido) com um perfil bem conservador e tenta de novo
+            extra = _preparar_video_seguro(video, log)
+            if not extra:
+                raise
+            return _postar_instagram_arquivo(cfg, extra, legenda, log)
     finally:
-        if pronto != video:
-            try:
-                os.remove(pronto)
-            except OSError:
-                pass
+        for p in (pronto, extra):
+            if p and p != video:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 def preparar_instagram(video, log=None, compactar_ligado=True):

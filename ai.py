@@ -60,7 +60,7 @@ File name: {nome_arquivo}
 Return:
 - "title": a scroll-stopping hook, max 70 characters, NO hashtags and no # symbol, no quotation marks, no emojis.
   Be honest: never promise something the video does not show.
-- "description": 1-2 short sentences with a hook, ending with a question or call to action that invites comments. NO hashtags and no # symbol in it: hashtags go only in the "hashtags" field.
+- "description": 1-2 short sentences that describe the video. Do NOT end with a question or a call to action, and do not ask viewers to comment, like or follow. NO hashtags and no # symbol in it: hashtags go only in the "hashtags" field.
 - "hashtags": exactly {qtd_hashtags} hashtags, lowercase, letters and numbers only, no spaces, no duplicates:
   2-3 broad high-reach tags popular with that audience (US: fyp, viral, trending; Brazil: fy, viral, brasil),
   3-4 niche tags specific to this topic, and 1-2 tags tied to the culture or communities around the topic.
