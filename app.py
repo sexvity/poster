@@ -1044,12 +1044,12 @@ class App(ctk.CTk):
                 arquivo, temporario = compactar.ajustar(video, compactar.LIMITES_MB[nome], log, nome)
             if nome == "YouTube Shorts":
                 return uploaders.postar_youtube(cfg, arquivo, titulo, descricao, hashtags, log)
-            if nome == "Instagram Reels":
-                return uploaders.postar_instagram(cfg, video, legenda, log)
             capa_ms = None
             if cfg.get("capa_ia", True):
-                log("TikTok: AI is choosing the cover...")
+                log(f"{nome.split()[0]}: AI is choosing the cover...")
                 capa_ms = capa.escolher(cfg.get("gemini_api_key", ""), video, titulo, log)
+            if nome == "Instagram Reels":
+                return uploaders.postar_instagram(cfg, video, legenda, log, capa_ms)
             try:
                 return uploaders.postar_tiktok(cfg, arquivo, legenda, log, capa_ms, opcoes)
             except RuntimeError as e:
@@ -1476,7 +1476,8 @@ class App(ctk.CTk):
                     compactado, temp2 = compactar.ajustar(arquivo, compactar.LIMITES_MB[plataforma], log, plataforma)
                 r = uploaders.postar_youtube(cfg, compactado, titulo_, descricao, hashtags, log)
             else:
-                r = uploaders.postar_instagram(cfg, arquivo, legenda, log)
+                capa_ms = capa.escolher(cfg.get("gemini_api_key", ""), arquivo, titulo_, log) if cfg.get("capa_ia", True) else None
+                r = uploaders.postar_instagram(cfg, arquivo, legenda, log, capa_ms)
             self.hist.registrar_postagem(plataforma)
             log(f"OK {plataforma}: {r}")
             return f"OK {r}"

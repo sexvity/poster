@@ -242,12 +242,19 @@ def _preparar_video_seguro(video, log=None):
     return saida
 
 
-def postar_instagram(cfg, video, legenda, log=None):
+def _dados_reel(legenda, token, capa_ms=None):
+    d = {"media_type": "REELS", "upload_type": "resumable", "caption": legenda, "access_token": token}
+    # instante (ms) do vídeo usado como capa; sem escolha da IA, usa 1,5 s para fugir de um primeiro quadro preto
+    d["thumb_offset"] = int(capa_ms) if capa_ms is not None else 1500
+    return d
+
+
+def postar_instagram(cfg, video, legenda, log=None, capa_ms=None):
     pronto = preparar_instagram(video, log, cfg.get("prefs", {}).get("compactar", True))
     extra = None
     try:
         try:
-            return _postar_instagram_arquivo(cfg, pronto, legenda, log)
+            return _postar_instagram_arquivo(cfg, pronto, legenda, log, capa_ms)
         except RuntimeError as e:
             txt = str(e)
             if "ProcessingFailed" not in txt and "processing failed" not in txt.lower() and "rejected the video" not in txt \
@@ -257,7 +264,7 @@ def postar_instagram(cfg, video, legenda, log=None):
             extra = _preparar_video_seguro(video, log)
             if not extra:
                 raise
-            return _postar_instagram_arquivo(cfg, extra, legenda, log)
+            return _postar_instagram_arquivo(cfg, extra, legenda, log, capa_ms)
     finally:
         for p in (pronto, extra):
             if p and p != video:
@@ -284,7 +291,7 @@ def preparar_instagram(video, log=None, compactar_ligado=True):
     return pronto
 
 
-def _postar_instagram_arquivo(cfg, video, legenda, log=None):
+def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
     uid = cfg.get("instagram_user_id", "")
     token = cfg.get("instagram_access_token", "")
     if not uid or not token:
@@ -304,7 +311,7 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None):
         _log(log, f"Instagram: creating the Reel (via {host})...")
         r = requests.post(
             f"https://{host}/{ver}/{uid}/media",
-            data={"media_type": "REELS", "upload_type": "resumable", "caption": legenda, "access_token": token},
+            data=_dados_reel(legenda, token, capa_ms),
             timeout=60,
         )
         if r.ok:
@@ -322,7 +329,7 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None):
             host = "graph.facebook.com"
             r2 = requests.post(
                 f"https://{host}/{ver}/{conta_id}/media",
-                data={"media_type": "REELS", "upload_type": "resumable", "caption": legenda, "access_token": token},
+                data=_dados_reel(legenda, token, capa_ms),
                 timeout=60,
             )
             if r2.ok:
