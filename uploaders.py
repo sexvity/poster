@@ -220,7 +220,7 @@ def _preparar_video_seguro(video, log=None):
     if not ffmpeg:
         return None
     saida = os.path.join(tempfile.gettempdir(), f"reels_safe_{os.getpid()}_{int(time.time())}.mp4")
-    _log(log, "Instagram: the file was refused, re-encoding with a safer profile and trying again...")
+    _log(log, "Instagram: Instagram refused the video format, converting it and trying again...")
     cmd = [
         ffmpeg, "-y", "-i", video, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
         "-vf", "scale='min(1080,iw)':-2,setsar=1,fps=30,format=yuv420p",
@@ -250,7 +250,8 @@ def postar_instagram(cfg, video, legenda, log=None):
             return _postar_instagram_arquivo(cfg, pronto, legenda, log)
         except RuntimeError as e:
             txt = str(e)
-            if "ProcessingFailed" not in txt and "processing failed" not in txt.lower() and "rejected the video" not in txt:
+            if "ProcessingFailed" not in txt and "processing failed" not in txt.lower() and "rejected the video" not in txt \
+                    and "ERROR" not in txt:
                 raise
             # parte do original (não do já convertido) com um perfil bem conservador e tenta de novo
             extra = _preparar_video_seguro(video, log)
@@ -267,10 +268,10 @@ def postar_instagram(cfg, video, legenda, log=None):
 
 
 def preparar_instagram(video, log=None, compactar_ligado=True):
-    """Converte para o formato do Reels e, se passar do limite de tamanho, compacta. Devolve o arquivo a enviar."""
+    """Devolve o arquivo a enviar: o original, ou compactado se passar do limite de tamanho. Não converte o formato."""
     import compactar
 
-    pronto = _preparar_video(video, log)
+    pronto = video  # envia o original; só converte se o Instagram recusar (ver postar_instagram)
     if compactar_ligado:
         menor, temporario = compactar.ajustar(pronto, compactar.LIMITES_MB["Instagram Reels"], log, "Instagram")
         if temporario:
