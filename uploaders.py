@@ -346,14 +346,19 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
     _checar(r)
     base = f"https://{host}/{ver}"
     container = r.json()["id"]
+    container_uri = r.json().get("uri")
 
     _log(log, "Instagram: uploading the video...")
     tamanho = os.path.getsize(video)
     with open(video, "rb") as f:
         corpo = f.read()  # o arquivo inteiro em memória: corpo simples, sem envio em streaming
-    for tentativa in range(1, 4):
+    destino = container_uri or f"https://rupload.facebook.com/ig-api-upload/{ver}/{container}"
+    # O servidor de upload da Meta costuma recusar o primeiro envio se ele chega logo após criar o Reel
+    # ("FILE_NOT_FOUND"): espera um pouco antes e, se ainda assim falhar, tenta de novo em silêncio.
+    time.sleep(6)
+    for tentativa in range(1, 5):
         r = requests.post(
-            f"https://rupload.facebook.com/ig-api-upload/{ver}/{container}",
+            destino,
             headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(tamanho),
                      "Content-Type": "application/octet-stream"},
             data=corpo,
@@ -361,16 +366,18 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
         )
         if r.ok:
             break
-        _log(log, f"Instagram: upload attempt {tentativa}/3 failed: {r.status_code} {r.text[:200]} "
-                  f"[trace {r.headers.get('x-fb-trace-id') or r.headers.get('x-fb-debug') or '-'}]")
-        try:
-            est = requests.get(f"{base}/{container}", params={"fields": "status_code,status,video_status",
-                                                              "access_token": token}, timeout=60)
-            _log(log, f"Instagram: container status: {est.text[:300]}")
-        except Exception:
-            pass
-        if tentativa < 3:
-            time.sleep(10 * tentativa)
+        if tentativa < 4:
+            _log(log, f"Instagram: server not ready, trying again ({tentativa}/3)...")
+            time.sleep(8 * tentativa)
+        else:
+            _log(log, f"Instagram: upload failed: {r.status_code} {r.text[:200]} "
+                      f"[trace {r.headers.get('x-fb-trace-id') or r.headers.get('x-fb-debug') or '-'}]")
+            try:
+                est = requests.get(f"{base}/{container}", params={"fields": "status_code,status,video_status",
+                                                                  "access_token": token}, timeout=60)
+                _log(log, f"Instagram: container status: {est.text[:300]}")
+            except Exception:
+                pass
     _checar(r)
     del corpo
 

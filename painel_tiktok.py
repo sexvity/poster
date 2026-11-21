@@ -50,7 +50,7 @@ class PainelTikTok(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Who can view this video", font=f(11), text_color=c["MUTED"]).pack(**pad)
         self.menu = ctk.CTkOptionMenu(
             self, values=[ESCOLHA], command=self._escolheu_privacidade, height=30, corner_radius=c["RAIO"],
-            fg_color=c["CARD"], button_color=c["BORDA"], button_hover_color="#2F3541", dropdown_fg_color=c["CARD"],
+            fg_color=c["CARD"], button_color=c["BORDA"], button_hover_color=c.get("HOVER_FORTE", "#48484A"), dropdown_fg_color=c["CARD"],
             dropdown_hover_color=c["ACENTO_SUAVE"], text_color=c["TEXTO"], font=f(12), dropdown_font=f(12),
         )
         self.menu.set(ESCOLHA)
@@ -63,7 +63,7 @@ class PainelTikTok(ctk.CTkFrame):
         for chave, texto in (("comentar", "Comment"), ("dueto", "Duet"), ("stitch", "Stitch")):
             cb = ctk.CTkCheckBox(
                 linha, text=texto, font=f(12), text_color=c["TEXTO"], fg_color=c["ACENTO"], hover_color=c["ACENTO"],
-                border_color=c["BORDA"], checkbox_width=18, checkbox_height=18,
+                border_color="#636366", checkbox_width=18, checkbox_height=18,
                 command=lambda k=chave: self._alternar(k),
             )
             cb.pack(side="left", padx=(0, 14))
@@ -71,24 +71,24 @@ class PainelTikTok(ctk.CTkFrame):
 
         self.sw = ctk.CTkSwitch(
             self, text="Disclose video content (promotes a brand, product or service)", font=f(12),
-            text_color=c["TEXTO"], progress_color=c["ACENTO"], button_color="#F2F3F7", button_hover_color="white",
-            fg_color=c["BORDA"], command=self._alternar_comercial,
+            text_color=c["TEXTO"], progress_color=c.get("VERDE", c["ACENTO"]), button_color="#FFFFFF", button_hover_color="white",
+            fg_color=c.get("SW_OFF", c["BORDA"]), command=self._alternar_comercial,
         )
         self.sw.pack(padx=12, pady=(2, 4), anchor="w")
         self.caixa_comercial = ctk.CTkFrame(self, fg_color="transparent")
         self.cb_proprio = ctk.CTkCheckBox(
             self.caixa_comercial, text="Your brand", font=f(12), text_color=c["TEXTO"], fg_color=c["ACENTO"],
-            hover_color=c["ACENTO"], border_color=c["BORDA"], checkbox_width=18, checkbox_height=18,
+            hover_color=c["ACENTO"], border_color="#636366", checkbox_width=18, checkbox_height=18,
             command=lambda: self._alternar("proprio"),
         )
         self.cb_terceiros = ctk.CTkCheckBox(
             self.caixa_comercial, text="Branded content", font=f(12), text_color=c["TEXTO"], fg_color=c["ACENTO"],
-            hover_color=c["ACENTO"], border_color=c["BORDA"], checkbox_width=18, checkbox_height=18,
+            hover_color=c["ACENTO"], border_color="#636366", checkbox_width=18, checkbox_height=18,
             command=lambda: self._alternar("terceiros"),
         )
         self.cb_proprio.pack(side="left", padx=(0, 14))
         self.cb_terceiros.pack(side="left")
-        self.aviso_comercial = ctk.CTkLabel(self, text="", font=f(11), text_color="#E0A23B", anchor="w",
+        self.aviso_comercial = ctk.CTkLabel(self, text="", font=f(11), text_color=c.get("AMBAR", "#FF9F0A"), anchor="w",
                                             justify="left", wraplength=360)
 
         self.consentimento = ctk.CTkFrame(self, fg_color="transparent")
@@ -101,7 +101,7 @@ class PainelTikTok(ctk.CTkFrame):
         self._desenhar_consentimento()
 
     def _link(self, pai, texto, url):
-        lbl = ctk.CTkLabel(pai, text=texto, font=self.fonte(11), text_color="#9AA0FF", cursor="hand2")
+        lbl = ctk.CTkLabel(pai, text=texto, font=self.fonte(11), text_color=self.c.get("ACENTO_TEXTO", "#64B5FF"), cursor="hand2")
         lbl.bind("<Button-1>", lambda _e: webbrowser.open(url))
         return lbl
 
@@ -206,7 +206,7 @@ class PainelTikTok(ctk.CTkFrame):
         self.info, self.erro = info, erro
         if not info:
             self.quem.configure(text=f"Could not read your TikTok account. {erro or 'Connect it in Settings > TikTok.'}",
-                                text_color="#E5646E")
+                                text_color=self.c.get("VERMELHO", "#FF453A"))
             return
         nome = info.get("creator_nickname") or info.get("creator_username") or "your account"
         user = info.get("creator_username")

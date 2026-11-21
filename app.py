@@ -36,23 +36,27 @@ import uploaders  # noqa: E402
 CONFIG = "config.json"
 PLATAFORMAS = ["YouTube Shorts", "Instagram Reels", "TikTok"]
 
-# Paleta: quase preto, bordas discretas e um único destaque
-BG = "#0A0B0F"
-CARD = "#101218"
-CARD2 = "#161922"
-BORDA = "#1F2330"
-TEXTO = "#ECEEF4"
-MUTED = "#7C8394"
-ACENTO = "#6D6FF5"
-ACENTO_HOVER = "#5B5DE0"
-ACENTO_SUAVE = "#1C1F3F"
-VERDE = "#3FB68B"
-AMBAR = "#E0A23B"
-VERMELHO = "#E5646E"
-PERIGO = "#B4474F"
-PERIGO_HOVER = "#963A41"
-FAMILIA = "Segoe UI"
-FAMILIA_TITULO = "Segoe UI"  # trocada por "Proxima Nova" (ou parecida) se estiver instalada no computador
+# Paleta no estilo iOS (modo escuro): preto puro, cartões cinza do sistema, azul de destaque, switches verdes
+BG = "#000000"
+CARD = "#1C1C1E"       # secondarySystemGroupedBackground
+CARD2 = "#2C2C2E"      # tertiarySystemGroupedBackground (campos)
+BORDA = "#38383A"      # separator
+TEXTO = "#FFFFFF"
+MUTED = "#8E8E93"      # secondaryLabel
+ACENTO = "#0A84FF"     # systemBlue
+ACENTO_HOVER = "#0071E3"
+ACENTO_SUAVE = "#0A2A4D"
+ACENTO_TEXTO = "#64B5FF"
+VERDE = "#30D158"      # systemGreen
+AMBAR = "#FF9F0A"
+VERMELHO = "#FF453A"
+PERIGO = "#D70015"
+PERIGO_HOVER = "#B3000F"
+SW_OFF = "#39393D"     # trilho do switch desligado
+HOVER = "#3A3A3C"
+HOVER_FORTE = "#48484A"
+FAMILIA = "Segoe UI"            # trocada por "SF Pro Text"/"Segoe UI Variable Text" se existir no computador
+FAMILIA_TITULO = "Segoe UI Semibold"  # trocada por "SF Pro Display" se existir
 
 # Dados que pertencem a cada conta (o resto, como a chave do Gemini e as chaves dos apps, é compartilhado)
 CHAVES_CONTA = [
@@ -62,8 +66,8 @@ CHAVES_CONTA = [
 ]
 NOVA_CONTA = "＋  Add account..."
 
-RAIO = 12  # cantos de botões e campos
-RAIO_CARTAO = 20
+RAIO = 10  # cantos de botões e campos (iOS)
+RAIO_CARTAO = 16
 MARGEM = 20  # espaço lateral dentro dos cartões
 
 ctk.set_appearance_mode("dark")
@@ -74,21 +78,26 @@ def fonte(tam=13, peso="normal"):
 
 
 def fonte_t(tam=13):
-    """Fonte de destaque (títulos e botões principais): Proxima Nova Bold quando disponível."""
-    return ctk.CTkFont(family=FAMILIA_TITULO, size=tam, weight="bold")
+    """Fonte de títulos e botões principais: SF Pro Display se instalada; senão Segoe UI Semibold (peso 600, como no iOS)."""
+    peso = "normal" if "semibold" in FAMILIA_TITULO.lower() else "bold"
+    return ctk.CTkFont(family=FAMILIA_TITULO, size=tam, weight=peso)
 
 
 def escolher_fontes():
-    """Proxima Nova é paga e não vem com o Windows: se o usuário a tiver instalada, o app usa; senão, uma parecida."""
-    global FAMILIA_TITULO
+    """O iOS usa a SF Pro, que não vem com o Windows: se estiver instalada o app usa; senão, a Segoe UI (a mais parecida)."""
+    global FAMILIA, FAMILIA_TITULO
     try:
         from tkinter import font as _tkfont
 
         instaladas = {f.lower(): f for f in _tkfont.families()}
-        for candidata in ("proxima nova", "proxima nova bold", "montserrat", "gotham", "avenir next", "segoe ui semibold"):
+        for candidata in ("sf pro text", "sf pro display", "segoe ui variable text", "segoe ui"):
+            if candidata in instaladas:
+                FAMILIA = instaladas[candidata]
+                break
+        for candidata in ("sf pro display", "sf pro text", "segoe ui semibold", "segoe ui"):
             if candidata in instaladas:
                 FAMILIA_TITULO = instaladas[candidata]
-                return
+                break
     except Exception:
         pass
 
@@ -126,7 +135,7 @@ class Chip(ctk.CTkButton):
 
     def __init__(self, master, texto, ligado, ao_mudar):
         super().__init__(
-            master, text=texto, height=34, corner_radius=17, border_width=1,
+            master, text=texto, height=36, corner_radius=10, border_width=0,
             font=fonte_t(12), command=self._alternar,
         )
         self.ligado = ligado
@@ -142,7 +151,7 @@ class Chip(ctk.CTkButton):
         if self.ligado:
             self.configure(fg_color=ACENTO, hover_color=ACENTO_HOVER, border_color=ACENTO, text_color="white")
         else:
-            self.configure(fg_color="transparent", hover_color=CARD2, border_color=BORDA, text_color=MUTED)
+            self.configure(fg_color=CARD2, hover_color=HOVER, border_color=CARD2, text_color="#AEAEB2")
 
 
 class App(ctk.CTk):
@@ -282,7 +291,7 @@ class App(ctk.CTk):
             hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(13), command=abrir,
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            linha, text="Copy link", height=38, corner_radius=RAIO, border_width=1, fg_color="transparent",
+            linha, text="Copy link", height=38, corner_radius=RAIO, border_width=0, fg_color="transparent",
             border_color=BORDA, hover_color=CARD2, text_color=TEXTO, font=fonte(13), command=copiar,
         ).pack(side="left", fill="x", expand=True)
         aviso.pack(anchor="w", padx=22, pady=(10, 0))
@@ -372,7 +381,7 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------ peças de UI
     def _cartao(self, pai, expandir=False):
-        c = ctk.CTkFrame(pai, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA)
+        c = ctk.CTkFrame(pai, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=0, border_color=BORDA)
         c.pack(fill="both" if expandir else "x", expand=expandir, pady=(0, 14))
         return c
 
@@ -391,7 +400,7 @@ class App(ctk.CTk):
 
     def _entrada(self, pai, var=None):
         e = ctk.CTkEntry(
-            pai, textvariable=var, height=42, corner_radius=RAIO, border_width=1,
+            pai, textvariable=var, height=42, corner_radius=RAIO, border_width=0,
             fg_color=CARD2, border_color=BORDA, text_color=TEXTO, font=fonte(13),
         )
         e.pack(fill="x", padx=MARGEM, pady=(0, 2))
@@ -399,7 +408,7 @@ class App(ctk.CTk):
 
     def _caixa(self, pai, altura, expandir=False):
         t = ctk.CTkTextbox(
-            pai, height=altura, corner_radius=RAIO, border_width=1, fg_color=CARD2,
+            pai, height=altura, corner_radius=RAIO, border_width=0, fg_color=CARD2,
             border_color=BORDA, text_color=TEXTO, font=fonte(13), wrap="word",
         )
         t.pack(fill="both" if expandir else "x", expand=expandir, padx=MARGEM, pady=(0, 2))
@@ -425,24 +434,24 @@ class App(ctk.CTk):
             ).pack(side="left")
         textos = ctk.CTkFrame(topo, fg_color="transparent")
         textos.pack(side="left", padx=(12, 0))
-        ctk.CTkLabel(textos, text="YTK SHORTS", font=fonte_t(21), text_color=TEXTO, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(textos, text="YTK SHORTS", font=fonte_t(26), text_color=TEXTO, anchor="w").pack(anchor="w")
         ctk.CTkLabel(
             textos, text="English captions and posting for a US audience",
             font=fonte(11), text_color=MUTED, anchor="w",
         ).pack(anchor="w")
         ctk.CTkButton(
-            topo, text="Settings", width=96, height=34, corner_radius=RAIO, border_width=1,
-            fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=MUTED,
-            font=fonte_t(12), command=self._config,
+            topo, text="Settings", width=96, height=34, corner_radius=RAIO, border_width=0,
+            fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=ACENTO,
+            font=fonte_t(13), command=self._config,
         ).pack(side="right")
         ctk.CTkButton(
-            topo, text="Clips", width=80, height=34, corner_radius=RAIO, border_width=1,
-            fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=MUTED,
-            font=fonte_t(12), command=self._dialogo_clipes,
+            topo, text="Clips", width=80, height=34, corner_radius=RAIO, border_width=0,
+            fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=ACENTO,
+            font=fonte_t(13), command=self._dialogo_clipes,
         ).pack(side="right", padx=(0, 8))
         self.menu_conta = ctk.CTkOptionMenu(
             topo, values=list(self.cfg["contas"]) + [NOVA_CONTA], command=self._trocar_conta, width=150, height=34,
-            corner_radius=RAIO, fg_color=CARD2, button_color=BORDA, button_hover_color="#2F3541",
+            corner_radius=RAIO, fg_color=CARD2, button_color=BORDA, button_hover_color=HOVER_FORTE,
             dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE, text_color=TEXTO, font=fonte(12),
             dropdown_font=fonte(12),
         )
@@ -462,7 +471,7 @@ class App(ctk.CTk):
         corpo.grid_rowconfigure(0, weight=1)
         # a coluna esquerda rola (o painel do TikTok a deixa mais alta que a janela)
         esq = ctk.CTkScrollableFrame(
-            corpo, fg_color="transparent", scrollbar_button_color=BORDA, scrollbar_button_hover_color="#2F3541",
+            corpo, fg_color="transparent", scrollbar_button_color=BORDA, scrollbar_button_hover_color=HOVER_FORTE,
         )
         esq.grid(row=0, column=0, sticky="nsew", padx=(0, 9))
         self.esq = esq
@@ -473,8 +482,8 @@ class App(ctk.CTk):
         c1 = self._cartao(esq, expandir=True)
         self._passo(c1, 1, "Video and topic")
         self.btn_video = ctk.CTkButton(
-            c1, text="Choose video...", height=48, corner_radius=RAIO, border_width=1, anchor="w",
-            fg_color=CARD2, hover_color="#232834", border_color=BORDA, text_color=TEXTO,
+            c1, text="Choose video...", height=48, corner_radius=RAIO, border_width=0, anchor="w",
+            fg_color=CARD2, hover_color=HOVER, border_color=BORDA, text_color=TEXTO,
             font=fonte(13), command=self._escolher,
         )
         self.btn_video.pack(fill="x", padx=MARGEM, pady=(0, 2))
@@ -496,7 +505,7 @@ class App(ctk.CTk):
         self.idiomas = {"Auto (from the video's speech)": "auto", "English (US)": "en", "Português (Brasil)": "pt"}
         self.menu_idioma = ctk.CTkOptionMenu(
             c1, values=list(self.idiomas), height=32, corner_radius=RAIO, fg_color=CARD2, button_color=BORDA,
-            button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+            button_hover_color=HOVER_FORTE, dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
             text_color=TEXTO, font=fonte(12), dropdown_font=fonte(12),
         )
         self.menu_idioma.set(next((k for k, v in self.idiomas.items() if v == self.prefs.get("idioma", "auto")),
@@ -506,7 +515,7 @@ class App(ctk.CTk):
         self.qtds_hash = ["0", "3", "5", "8", "10", "12", "15"]
         self.menu_qtd_hash = ctk.CTkOptionMenu(
             c1, values=self.qtds_hash, height=32, corner_radius=RAIO, fg_color=CARD2, button_color=BORDA,
-            button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+            button_hover_color=HOVER_FORTE, dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
             text_color=TEXTO, font=fonte(12), dropdown_font=fonte(12),
         )
         qtd_salva = str(self.prefs.get("qtd_hashtags", 8))
@@ -514,14 +523,14 @@ class App(ctk.CTk):
         self.menu_qtd_hash.pack(fill="x", padx=MARGEM, pady=(0, 0))
         self.sw_pergunta = ctk.CTkSwitch(
             c1, text="Title as a question (to get comments)", font=fonte(12), text_color=MUTED,
-            progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+            progress_color=VERDE, button_color="#FFFFFF", button_hover_color="white", fg_color=SW_OFF,
         )
         self.sw_pergunta.pack(anchor="w", padx=MARGEM + 2, pady=(12, 0))
         if self.prefs.get("titulo_pergunta", False):
             self.sw_pergunta.select()
         self.btn_gerar = ctk.CTkButton(
-            c1, text="Generate text", height=46, corner_radius=RAIO, border_width=1,
-            fg_color=ACENTO_SUAVE, hover_color="#262A55", border_color=ACENTO, text_color="#D3D5FF",
+            c1, text="Generate text", height=46, corner_radius=RAIO, border_width=0,
+            fg_color=ACENTO_SUAVE, hover_color="#0F3A66", border_color=ACENTO, text_color=ACENTO_TEXTO,
             font=fonte_t(13), command=self._gerar,
         )
         self.btn_gerar.pack(fill="x", padx=MARGEM, pady=(8, MARGEM))
@@ -545,14 +554,15 @@ class App(ctk.CTk):
 
         self.painel_tiktok = PainelTikTok(
             c3, {"CARD": CARD, "CARD2": CARD2, "BORDA": BORDA, "TEXTO": TEXTO, "MUTED": MUTED, "ACENTO": ACENTO,
-                 "ACENTO_SUAVE": ACENTO_SUAVE, "RAIO": RAIO},
+                 "ACENTO_SUAVE": ACENTO_SUAVE, "RAIO": RAIO, "VERDE": VERDE, "SW_OFF": SW_OFF,
+                 "HOVER_FORTE": HOVER_FORTE, "AMBAR": AMBAR, "VERMELHO": VERMELHO, "ACENTO_TEXTO": ACENTO_TEXTO},
             fonte, lambda: self.cfg, self._escrever,
         )
 
         self.sw_agenda = ctk.CTkSwitch(
             c3, text="Post at peak US time", font=fonte(13), text_color=TEXTO,
-            progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white",
-            fg_color=BORDA, command=self._atualizar_previa,
+            progress_color=VERDE, button_color="#FFFFFF", button_hover_color="white",
+            fg_color=SW_OFF, command=self._atualizar_previa,
         )
         self.sw_agenda.pack(anchor="w", padx=MARGEM + 2, pady=(12, 4))
         if self.prefs.get("agendar"):
@@ -565,7 +575,7 @@ class App(ctk.CTk):
 
         self.sw_compactar = ctk.CTkSwitch(
             c3, text="Compress if over the platform limit", font=fonte(12), text_color=MUTED,
-            progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+            progress_color=VERDE, button_color="#FFFFFF", button_hover_color="white", fg_color=SW_OFF,
         )
         self.sw_compactar.pack(anchor="w", padx=MARGEM + 2, pady=(0, 10))
         if self.prefs.get("compactar", True):
@@ -573,7 +583,7 @@ class App(ctk.CTk):
 
         self.sw_auto = ctk.CTkSwitch(
             c3, text="Empty title? AI writes it and posts (no review)", font=fonte(12), text_color=MUTED,
-            progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+            progress_color=VERDE, button_color="#FFFFFF", button_hover_color="white", fg_color=SW_OFF,
         )
         self.sw_auto.pack(anchor="w", padx=MARGEM + 2, pady=(0, 10))
         if self.prefs.get("auto"):
@@ -600,7 +610,7 @@ class App(ctk.CTk):
         ctk.CTkFrame(c2, height=MARGEM - 2, fg_color="transparent").pack()
 
         self.btn_postar = ctk.CTkButton(
-            dire, text="Post now", height=52, corner_radius=14, fg_color=ACENTO,
+            dire, text="Post now", height=54, corner_radius=14, fg_color=ACENTO,
             hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(16), command=self._postar,
         )
         self.btn_postar.pack(fill="x", pady=(0, 8))
@@ -632,7 +642,7 @@ class App(ctk.CTk):
         self.log.pack(fill="both", expand=True)
         self.log.tag_config("ok", foreground=VERDE)
         self.log.tag_config("erro", foreground=VERMELHO)
-        self.log.tag_config("hora", foreground="#5A6072")
+        self.log.tag_config("hora", foreground="#636366")
         self._aba_direita("log")
         self._botao_estado()
 
@@ -837,7 +847,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(linha, text=curto[n], font=fonte_t(11), text_color=TEXTO, width=68, anchor="w").pack(side="left")
             menu = ctk.CTkOptionMenu(
                 linha, values=list(rotulos), height=30, corner_radius=10, fg_color=CARD2, button_color=BORDA,
-                button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+                button_hover_color=HOVER_FORTE, dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
                 text_color=TEXTO, font=fonte(11), dropdown_font=fonte(11),
                 command=lambda v, n=n, r=rotulos: self._slot_sel.__setitem__(n, r[v]),
             )
@@ -1322,7 +1332,7 @@ class App(ctk.CTk):
 
     def _aba_direita(self, nome):
         self._aba = nome
-        ativo = {"fg_color": ACENTO_SUAVE, "text_color": "#D3D5FF", "hover_color": ACENTO_SUAVE}
+        ativo = {"fg_color": ACENTO_SUAVE, "text_color": ACENTO_TEXTO, "hover_color": ACENTO_SUAVE}
         inativo = {"fg_color": "transparent", "text_color": MUTED, "hover_color": CARD2}
         self.btn_aba_log.configure(**(ativo if nome == "log" else inativo))
         self.btn_aba_ag.configure(**(ativo if nome == "ag" else inativo))
@@ -1354,14 +1364,14 @@ class App(ctk.CTk):
         curto = {"YouTube Shorts": "YouTube", "Instagram Reels": "Instagram", "TikTok": "TikTok"}
         for it in itens:
             ativo = any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values())
-            cartao = ctk.CTkFrame(self.f_ag, fg_color=CARD2, corner_radius=RAIO, border_width=1, border_color=BORDA)
+            cartao = ctk.CTkFrame(self.f_ag, fg_color=CARD2, corner_radius=RAIO, border_width=0, border_color=BORDA)
             cartao.pack(fill="x", pady=(0, 8), padx=2)
             topo = ctk.CTkFrame(cartao, fg_color="transparent")
             topo.pack(fill="x", padx=12, pady=(10, 0))
             if ativo:
                 ctk.CTkButton(
                     topo, text="Cancel", width=62, height=26, corner_radius=8, fg_color="transparent",
-                    border_width=1, border_color=BORDA, hover_color="#2A1519", text_color=VERMELHO,
+                    border_width=0, border_color=BORDA, hover_color="#3A1C1C", text_color=VERMELHO,
                     font=fonte(11), command=lambda i=it["id"]: self._cancelar_agendado(i),
                 ).pack(side="right")
             titulo = it.get("titulo", "") or it["nome"]
@@ -1379,7 +1389,7 @@ class App(ctk.CTk):
                 if est == "waiting":
                     txt, cor = f"{agenda._fmt(dt)} NY  ·  in {agenda.faltam(dt)}", MUTED
                 elif est == "posting":
-                    txt, cor = "posting now...", "#A5A7FF"
+                    txt, cor = "posting now...", ACENTO_TEXTO
                 elif est == "done":
                     txt, cor = "posted ✓", VERDE
                 elif est == "canceled":
@@ -1395,7 +1405,7 @@ class App(ctk.CTk):
         if any(not any(i["estado"] in ("waiting", "posting") for i in it["plataformas"].values()) for it in itens):
             ctk.CTkButton(
                 self.f_ag, text="Clear finished", height=28, corner_radius=RAIO, fg_color="transparent",
-                border_width=1, border_color=BORDA, hover_color=CARD2, text_color=MUTED, font=fonte(11),
+                border_width=0, border_color=BORDA, hover_color=CARD2, text_color=MUTED, font=fonte(11),
                 command=self._limpar_finalizados,
             ).pack(anchor="e", pady=(2, 0), padx=2)
 
@@ -1585,14 +1595,14 @@ class App(ctk.CTk):
             font=fonte(12), text_color=MUTED, anchor="w", justify="left", wraplength=560,
         ).pack(fill="x", padx=24, pady=(2, 12))
 
-        cartao = ctk.CTkFrame(j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA)
+        cartao = ctk.CTkFrame(j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=0, border_color=BORDA)
         cartao.pack(fill="x", padx=20)
 
         linha = ctk.CTkFrame(cartao, fg_color="transparent")
         linha.pack(fill="x", padx=MARGEM, pady=(16, 6))
         pasta_var = ctk.StringVar(value=self.cfg.get("clipes_pasta", ""))
         ctk.CTkEntry(
-            linha, textvariable=pasta_var, height=40, corner_radius=RAIO, border_width=1, fg_color=CARD2,
+            linha, textvariable=pasta_var, height=40, corner_radius=RAIO, border_width=0, fg_color=CARD2,
             border_color=BORDA, text_color=TEXTO, font=fonte(12), state="readonly",
             placeholder_text="No folder chosen",
         ).pack(side="left", fill="x", expand=True)
@@ -1606,8 +1616,8 @@ class App(ctk.CTk):
                     ligar()
 
         ctk.CTkButton(
-            linha, text="Browse", width=90, height=40, corner_radius=RAIO, fg_color=CARD2, hover_color="#232834",
-            border_width=1, border_color=BORDA, text_color=TEXTO, font=fonte_t(12), command=escolher_pasta,
+            linha, text="Browse", width=90, height=40, corner_radius=RAIO, fg_color=CARD2, hover_color=HOVER,
+            border_width=0, border_color=BORDA, text_color=TEXTO, font=fonte_t(12), command=escolher_pasta,
         ).pack(side="left", padx=(8, 0))
 
         def ligar():
@@ -1633,7 +1643,7 @@ class App(ctk.CTk):
         def interruptor(texto, chave, padrao=False, comando=None):
             sw = ctk.CTkSwitch(
                 cartao, text=texto, font=fonte(13), text_color=TEXTO, progress_color=ACENTO,
-                button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+                button_color="#FFFFFF", button_hover_color="white", fg_color=BORDA,
                 command=comando or (lambda: guardar(chave, bool(sw.get()))),
             )
             sw.pack(anchor="w", padx=MARGEM + 2, pady=(8, 2))
@@ -1685,7 +1695,7 @@ class App(ctk.CTk):
 
             var.trace_add("write", salvar_num)
             ctk.CTkEntry(
-                col, textvariable=var, width=120, height=36, corner_radius=RAIO, border_width=1, fg_color=CARD2,
+                col, textvariable=var, width=120, height=36, corner_radius=RAIO, border_width=0, fg_color=CARD2,
                 border_color=BORDA, text_color=TEXTO, font=fonte(13),
             ).pack(pady=(4, 0))
 
@@ -1695,8 +1705,8 @@ class App(ctk.CTk):
         ctk.CTkLabel(j, text="RECENT CLIPS", font=fonte_t(10), text_color=MUTED, anchor="w").pack(
             fill="x", padx=26, pady=(16, 4))
         lista = ctk.CTkScrollableFrame(
-            j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=1, border_color=BORDA,
-            scrollbar_button_color=BORDA, scrollbar_button_hover_color="#2F3541",
+            j, fg_color=CARD, corner_radius=RAIO_CARTAO, border_width=0, border_color=BORDA,
+            scrollbar_button_color=BORDA, scrollbar_button_hover_color=HOVER_FORTE,
         )
         lista.pack(fill="both", expand=True, padx=20, pady=(0, 20))
 
@@ -1724,7 +1734,7 @@ class App(ctk.CTk):
                 if d.get("estado") == "pronto_tiktok":
                     ctk.CTkButton(
                         linha, text="Done", width=54, height=28, corner_radius=8, fg_color="transparent",
-                        border_width=1, border_color=BORDA, text_color=MUTED, hover_color=CARD2, font=fonte(11),
+                        border_width=0, border_color=BORDA, text_color=MUTED, hover_color=CARD2, font=fonte(11),
                         command=lambda c=caminho: (self.hist.atualizar(c, estado="postado"), desenhar()),
                     ).pack(side="right", padx=(6, 0))
                     ctk.CTkButton(
@@ -1763,7 +1773,7 @@ class App(ctk.CTk):
         def campo(aba, chave, rotulo, secreto=False):
             titulo_campo(aba, rotulo)
             e = ctk.CTkEntry(
-                aba, height=36, corner_radius=RAIO, border_width=1, fg_color=CARD2, border_color=BORDA,
+                aba, height=36, corner_radius=RAIO, border_width=0, fg_color=CARD2, border_color=BORDA,
                 text_color=TEXTO, font=fonte(13), show="•" if secreto else "",
             )
             e.insert(0, self.cfg.get(chave, ""))
@@ -1802,7 +1812,7 @@ class App(ctk.CTk):
                 e.insert(0, p)
 
         ctk.CTkButton(
-            a, text="Browse...", width=110, height=30, corner_radius=RAIO, border_width=1,
+            a, text="Browse...", width=110, height=30, corner_radius=RAIO, border_width=0,
             fg_color="transparent", border_color=BORDA, hover_color=CARD2, text_color=MUTED,
             font=fonte(12), command=procurar,
         ).pack(anchor="w", padx=6, pady=(8, 0))
@@ -1870,7 +1880,7 @@ class App(ctk.CTk):
 
         ctk.CTkButton(
             a, text="Connect to TikTok", height=36, corner_radius=RAIO, fg_color=ACENTO_SUAVE,
-            hover_color="#2D3160", border_width=1, border_color=ACENTO, text_color="#C9CCFF",
+            hover_color="#0F3A66", border_width=0, border_color=ACENTO, text_color=ACENTO_TEXTO,
             font=fonte_t(13), command=conectar_tiktok,
         ).pack(fill="x", padx=6, pady=(14, 0))
         def desconectar_tiktok():
@@ -1952,7 +1962,7 @@ class App(ctk.CTk):
         ).pack(fill="x", padx=6)
         ctk.CTkButton(
             a, text="Remove this account", height=34, corner_radius=RAIO, fg_color="transparent",
-            hover_color="#2A1519", text_color=VERMELHO, font=fonte(12), anchor="w", command=remover,
+            hover_color="#3A1C1C", text_color=VERMELHO, font=fonte(12), anchor="w", command=remover,
         ).pack(fill="x", padx=6, pady=(6, 0))
 
         def guardar():
