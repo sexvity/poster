@@ -502,6 +502,23 @@ class App(ctk.CTk):
         self.menu_idioma.set(next((k for k, v in self.idiomas.items() if v == self.prefs.get("idioma", "auto")),
                                   "Auto (from the video's speech)"))
         self.menu_idioma.pack(fill="x", padx=MARGEM, pady=(0, 0))
+        self._rotulo(c1, "NUMBER OF HASHTAGS", 10)
+        self.qtds_hash = ["0", "3", "5", "8", "10", "12", "15"]
+        self.menu_qtd_hash = ctk.CTkOptionMenu(
+            c1, values=self.qtds_hash, height=32, corner_radius=RAIO, fg_color=CARD2, button_color=BORDA,
+            button_hover_color="#2F3541", dropdown_fg_color=CARD2, dropdown_hover_color=ACENTO_SUAVE,
+            text_color=TEXTO, font=fonte(12), dropdown_font=fonte(12),
+        )
+        qtd_salva = str(self.prefs.get("qtd_hashtags", 8))
+        self.menu_qtd_hash.set(qtd_salva if qtd_salva in self.qtds_hash else "8")
+        self.menu_qtd_hash.pack(fill="x", padx=MARGEM, pady=(0, 0))
+        self.sw_pergunta = ctk.CTkSwitch(
+            c1, text="Title as a question (to get comments)", font=fonte(12), text_color=MUTED,
+            progress_color=ACENTO, button_color="#F2F3F7", button_hover_color="white", fg_color=BORDA,
+        )
+        self.sw_pergunta.pack(anchor="w", padx=MARGEM + 2, pady=(12, 0))
+        if self.prefs.get("titulo_pergunta", False):
+            self.sw_pergunta.select()
         self.btn_gerar = ctk.CTkButton(
             c1, text="Generate text", height=46, corner_radius=RAIO, border_width=1,
             fg_color=ACENTO_SUAVE, hover_color="#262A55", border_color=ACENTO, text_color="#D3D5FF",
@@ -833,6 +850,18 @@ class App(ctk.CTk):
         except Exception:
             return self.prefs.get("idioma", "auto")
 
+    def _qtd_hashtags(self):
+        try:
+            return int(self.menu_qtd_hash.get())
+        except Exception:
+            return int(self.prefs.get("qtd_hashtags", 8))
+
+    def _titulo_pergunta(self):
+        try:
+            return bool(self.sw_pergunta.get())
+        except Exception:
+            return bool(self.prefs.get("titulo_pergunta", False))
+
     def _guardar_preferencias(self):
         self.prefs = {
             "plataformas": {n: self.chips[n].ligado for n in PLATAFORMAS},
@@ -840,6 +869,8 @@ class App(ctk.CTk):
             "auto": bool(self.sw_auto.get()),
             "compactar": bool(self.sw_compactar.get()),
             "idioma": self._idioma(),
+            "qtd_hashtags": self._qtd_hashtags(),
+            "titulo_pergunta": self._titulo_pergunta(),
         }
         self.cfg["prefs"] = self.prefs
         self._gravar()
@@ -924,6 +955,9 @@ class App(ctk.CTk):
         nome = os.path.basename(self.video)
         chave = self.cfg.get("gemini_api_key", "")
         idioma = self._idioma()  # lido aqui, na thread da janela
+        qtd_hash = self._qtd_hashtags()
+        pergunta = self._titulo_pergunta()
+        self._guardar_preferencias()
         self.btn_gerar.configure(state="disabled", text="Generating...")
 
         def tarefa():
@@ -933,7 +967,8 @@ class App(ctk.CTk):
                 if not quadros:
                     self._escrever("Could not extract frames; using only your description.")
                 audio = capa.extrair_audio(self.video) if idioma == "auto" else None
-                res = ai.gerar(chave, descricao, nome, quadros=quadros, idioma=idioma, audio=audio)
+                res = ai.gerar(chave, descricao, nome, qtd_hash, quadros=quadros, idioma=idioma, audio=audio,
+                                titulo_pergunta=pergunta)
                 self.fila.put(("preencher", res))
                 self._escrever("Text generated. Review it and edit if you like.")
                 if depois_postar:
@@ -1411,8 +1446,9 @@ class App(ctk.CTk):
         quadros = [b for _, b in capa.extrair_quadros(caminho, 6)]
         idioma = self.prefs.get("idioma", "auto")
         audio = capa.extrair_audio(caminho) if idioma == "auto" else None
-        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome, quadros=quadros,
-                       idioma=idioma, audio=audio)
+        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome,
+                       int(self.prefs.get("qtd_hashtags", 8)), quadros=quadros, idioma=idioma, audio=audio,
+                       titulo_pergunta=bool(self.prefs.get("titulo_pergunta", False)))
         titulo_ = ai.sem_hashtags(res["titulo"])
         descricao = ai.sem_hashtags(res["descricao"])
         hashtags = self._hashtags_finais(" ".join(res["hashtags"]))

@@ -31,7 +31,8 @@ def _limpar_hashtags(lista):
     return list(dict.fromkeys(saida))  # remove repetidas
 
 
-def gerar(api_key, descricao, nome_arquivo="", qtd_hashtags=8, quadros=None, idioma="auto", audio=None):
+def gerar(api_key, descricao, nome_arquivo="", qtd_hashtags=8, quadros=None, idioma="auto", audio=None,
+          titulo_pergunta=False):
     if not api_key:
         raise RuntimeError("Gemini key missing. Open Settings and paste the key.")
 
@@ -49,6 +50,20 @@ def gerar(api_key, descricao, nome_arquivo="", qtd_hashtags=8, quadros=None, idi
                         "no speech, write in natural US English for an American audience (the creator's notes may be in Portuguese "
                         "even for an English video: adapt them, do not translate word for word). Never mix the two languages.")
 
+    if titulo_pergunta:
+        regra_titulo = ("a scroll-stopping title written as a QUESTION that makes people want to answer in the comments "
+                        "(a debate, a choice or a guess about what is in the video), max 70 characters, ending with a question mark, "
+                        "NO hashtags and no # symbol, no quotation marks, no emojis.")
+    else:
+        regra_titulo = "a scroll-stopping hook, max 70 characters, NO hashtags and no # symbol, no quotation marks, no emojis."
+    qtd_hashtags = max(0, int(qtd_hashtags))
+    if qtd_hashtags == 0:
+        regra_hashtags = "an empty list []. The creator wants no hashtags."
+    else:
+        regra_hashtags = (f"exactly {qtd_hashtags} hashtags, lowercase, letters and numbers only, no spaces, no duplicates, "
+                          "mixing broad high-reach tags popular with that audience (US: fyp, viral, trending; Brazil: fy, viral, brasil), "
+                          "niche tags specific to this topic, and tags tied to the culture or communities around the topic "
+                          "(with few hashtags, prefer the most relevant ones).")
     prompt = f"""You are a short-form video growth strategist (TikTok, Instagram Reels, YouTube Shorts).
 {regra_idioma}
 Use current slang and cultural references of that audience only where they genuinely fit the topic, never forced or cringe.
@@ -58,12 +73,10 @@ File name: {nome_arquivo}
 {"Frames sampled from the video, in order, are attached after this text. Base the copy on what you actually SEE in them plus the creator's description. The creator's description wins on facts the frames cannot show (city, event, names). NEVER invent details that neither the frames nor the description support: time of day, weather, place, landmarks, brands, numbers or people. If something is unclear, stay vague instead of guessing." if quadros else ""}
 
 Return:
-- "title": a scroll-stopping hook, max 70 characters, NO hashtags and no # symbol, no quotation marks, no emojis.
+- "title": {regra_titulo}
   Be honest: never promise something the video does not show.
 - "description": 1-2 short sentences that describe the video. Do NOT end with a question or a call to action, and do not ask viewers to comment, like or follow. NO hashtags and no # symbol in it: hashtags go only in the "hashtags" field.
-- "hashtags": exactly {qtd_hashtags} hashtags, lowercase, letters and numbers only, no spaces, no duplicates:
-  2-3 broad high-reach tags popular with that audience (US: fyp, viral, trending; Brazil: fy, viral, brasil),
-  3-4 niche tags specific to this topic, and 1-2 tags tied to the culture or communities around the topic.
+- "hashtags": {regra_hashtags}
 Answer ONLY with JSON: {{"title": "...", "description": "...", "hashtags": ["...", "..."]}}"""
 
     partes = [{"text": prompt}]
@@ -117,5 +130,5 @@ Answer ONLY with JSON: {{"title": "...", "description": "...", "hashtags": ["...
     return {
         "titulo": sem_hashtags(str(titulo).strip().strip('"'))[:100],
         "descricao": sem_hashtags(desc),
-        "hashtags": _limpar_hashtags(dados.get("hashtags", [])),
+        "hashtags": _limpar_hashtags(dados.get("hashtags", []))[:qtd_hashtags],
     }
