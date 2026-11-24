@@ -1231,7 +1231,6 @@ class App(ctk.CTk):
     def _contar_espera(self, delta):
         with self._ag_lock:
             self._esperando = max(0, self._esperando + delta)
-            agenda.evitar_suspensao(self._esperando > 0)  # o computador não dorme enquanto há algo na fila
 
     def _marcar(self, item, nome, estado, msg=""):
         with self._ag_lock:
@@ -1422,11 +1421,49 @@ class App(ctk.CTk):
             except Exception:
                 pass
         self.fila_clipes = queue.Queue()
+        self._clipe_ativo = False
         self._dlg_clipes = None
+        threading.Thread(target=self._manter_acordado, daemon=True).start()
         self.vigia = clipes.Vigia(self.hist, lambda: self.cfg, self._clipe_novo)
         self.vigia.start()
         threading.Thread(target=self._trabalhador_clipes, daemon=True).start()
         threading.Thread(target=self._reenfileirar_aguardando, daemon=True).start()
+
+    def _tem_atividade(self):
+        """True enquanto o app tem trabalho: postagem em andamento, agendados esperando, clipes na fila/sendo
+        processados ou esperando o YouTube voltar."""
+        try:
+            if self.ativos > 0 or self._esperando > 0 or self._clipe_ativo or not self.fila_clipes.empty():
+                return True
+            if self.hist.aguardando():
+                return True
+            with self.hist.lock:
+                return any(d.get("estado") in ("na_fila", "processando") for d in self.hist.dados["clipes"].values())
+        except Exception:
+            return True  # na dúvida, não deixa dormir
+
+    def _manter_acordado(self):
+        """Impede o Windows de suspender enquanto há trabalho e libera quando termina. O estado de energia vale
+        para a thread que o definiu, por isso uma única thread cuida disso."""
+        if sys.platform != "win32":
+            return
+        import ctypes
+
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        acordado = None
+        while True:
+            ocupado = self._tem_atividade()
+            if ocupado != acordado:
+                try:
+                    ctypes.windll.kernel32.SetThreadExecutionState(
+                        ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if ocupado else 0))
+                except Exception:
+                    pass
+                if ocupado or acordado is not None:
+                    self._escrever("Keeping the PC awake until the work is done." if ocupado
+                                   else "Work finished: the PC can sleep now.")
+                acordado = ocupado
+            time.sleep(15)
 
     def _reenfileirar_aguardando(self):
         """Clipes que esperam o YouTube voltar (limite diário de envios) entram de novo na fila quando a pausa acaba."""
@@ -1449,11 +1486,14 @@ class App(ctk.CTk):
     def _trabalhador_clipes(self):
         while True:
             caminho = self.fila_clipes.get()
+            self._clipe_ativo = True
             try:
                 self._processar_clipe(caminho)
             except Exception as e:
                 self.hist.atualizar(caminho, estado="falhou", erro=str(e)[:300])
                 self._escrever(f"FAILED clip {os.path.basename(caminho)}: {e}")
+            finally:
+                self._clipe_ativo = bool(not self.fila_clipes.empty())
             time.sleep(4)  # respiro entre clipes (a IA gratuita tem limite por minuto)
 
     def _processar_clipe(self, caminho):
