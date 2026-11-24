@@ -1805,7 +1805,7 @@ class App(ctk.CTk):
         ROTULOS = {
             "na_fila": ("Waiting", MUTED), "processando": ("Working...", AMBAR), "postado": ("Posted", VERDE),
             "pronto_tiktok": ("Ready for TikTok", ACENTO), "falhou": ("Failed", VERMELHO),
-            "ignorado": ("Skipped", MUTED), "parcial": ("Partly posted", AMBAR), "aguardando": ("Waiting for YouTube", AMBAR),
+            "ignorado": ("Skipped", MUTED), "parcial": ("Partly posted", AMBAR), "aguardando": ("Waiting", AMBAR),
         }
 
         def tentar_de_novo(caminho):
@@ -1814,12 +1814,31 @@ class App(ctk.CTk):
             self._escrever(f"Trying clip again: {os.path.basename(caminho)}")
             desenhar(True)
 
+        def situacao(d):
+            """Situação de cada site para o clipe: [(nome, texto, cor)]."""
+            saida = []
+            for plat, r in (d.get("resultados") or {}).items():
+                r = str(r)
+                nome_ = "YouTube" if plat.startswith("You") else "Instagram"
+                if r.startswith("OK"):
+                    saida.append((nome_, "posted ✓", VERDE))
+                elif r.startswith("waiting"):
+                    resta = int(self.hist.pausa_restante(plat) // 60) + 1 if self.hist.pausa_restante(plat) > 0 else 0
+                    saida.append((nome_, f"waiting (next try in ~{resta} min)" if resta else "waiting (trying soon)", AMBAR))
+                elif r.startswith("skipped"):
+                    saida.append((nome_, "skipped", MUTED))
+                else:
+                    saida.append((nome_, "failed", VERMELHO))
+            if d.get("estado") == "pronto_tiktok":
+                saida.append(("TikTok", "ready for you to review and post", ACENTO_TEXTO))
+            return saida
+
         def motivo(d):
             """Resumo curto do que deu errado, por plataforma."""
             partes = []
             for plat, r in (d.get("resultados") or {}).items():
                 r = str(r)
-                if not r.startswith("OK"):
+                if r.startswith(("failed", "skipped")):
                     curto = "YouTube" if plat.startswith("You") else "Instagram"
                     partes.append(f"{curto}: {r[:90]}")
             if not partes and d.get("erro"):
@@ -1839,7 +1858,9 @@ class App(ctk.CTk):
                 controle["timer"] = None
             itens = self.hist.lista(30)
             # só redesenha quando algo mudou: apagar e recriar tudo a cada poucos segundos fazia a lista piscar e travar
-            sig = repr([(c, d.get("estado"), d.get("resultados"), d.get("erro")) for c, d in itens])
+            sig = repr([(c, d.get("estado"), d.get("resultados"), d.get("erro"),
+                         [int(self.hist.pausa_restante(p) // 60) for p in ("YouTube Shorts", "Instagram Reels")])
+                        for c, d in itens])
             if not forcar and sig == controle["sig"]:
                 controle["timer"] = j.after(5000, desenhar)
                 return
@@ -1873,7 +1894,15 @@ class App(ctk.CTk):
                         font=fonte_t(11), command=lambda c=caminho: tentar_de_novo(c),
                     ).pack(side="right", padx=(6, 0))
                 ctk.CTkLabel(linha, text=txt, font=fonte_t(11), text_color=cor).pack(side="right", padx=(8, 4))
-                if d.get("estado") in ("falhou", "parcial", "aguardando") and motivo(d):
+                sit = situacao(d)
+                if sit:
+                    chips = ctk.CTkFrame(lista, fg_color="transparent")
+                    chips.pack(fill="x", padx=12, pady=(0, 2))
+                    for nome_, texto_, cor_ in sit:
+                        ctk.CTkLabel(chips, text=nome_, font=fonte_t(10), text_color=TEXTO).pack(side="left")
+                        ctk.CTkLabel(chips, text=f" {texto_}", font=fonte(10), text_color=cor_).pack(
+                            side="left", padx=(0, 12))
+                if motivo(d):
                     ctk.CTkLabel(lista, text=motivo(d), font=fonte(10), text_color=MUTED, anchor="w",
                                  justify="left", wraplength=500).pack(fill="x", padx=12, pady=(0, 4))
             controle["timer"] = j.after(5000, desenhar)
