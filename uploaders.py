@@ -232,6 +232,7 @@ def _preparar_video_seguro(video, log=None, nivel=1):
         "-c:v", "libx264", "-profile:v", perfil, "-level", "4.0", "-preset", "medium", "-crf", crf,
         "-maxrate", maxrate, "-bufsize", "16M", "-g", "60", "-bf", bf,
         "-c:a", "aac", "-b:a", "128k", "-ar", ar, "-ac", "2",
+        "-x264-params", "open-gop=0", "-use_editlist", "0",  # GOP fechado e sem edit list (exigências do Reels)
         "-movflags", "+faststart", "-map_metadata", "-1", "-metadata:s:v", "rotate=0", saida,
     ]
     try:
