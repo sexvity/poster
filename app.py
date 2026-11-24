@@ -1413,6 +1413,14 @@ class App(ctk.CTk):
     def _iniciar_clipes(self):
         """Vigia a pasta de clipes (de outro programa) e posta sozinho no YouTube/Instagram."""
         self.hist = clipes.Historico()
+        if not self.cfg.get("clipes_antigos_liberados"):
+            # versões anteriores ignoravam o que já estava na pasta: agora esses vídeos também são postados
+            clipes.liberar_antigos(self.hist)
+            self.cfg["clipes_antigos_liberados"] = True
+            try:
+                self._gravar()
+            except Exception:
+                pass
         self.fila_clipes = queue.Queue()
         self._dlg_clipes = None
         self.vigia = clipes.Vigia(self.hist, lambda: self.cfg, self._clipe_novo)
@@ -1590,7 +1598,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(j, text="Clips", font=fonte_t(22), text_color=TEXTO, anchor="w").pack(
             fill="x", padx=24, pady=(20, 0))
         ctk.CTkLabel(
-            j, text="Point to the folder where your clip app saves videos. New clips get a caption, a vertical "
+            j, text="Point to the folder where your clip app saves videos. Every clip not posted yet gets a caption, a vertical "
                     "version and are posted for you.",
             font=fonte(12), text_color=MUTED, anchor="w", justify="left", wraplength=560,
         ).pack(fill="x", padx=24, pady=(2, 12))
@@ -1627,10 +1635,9 @@ class App(ctk.CTk):
                 sw_ativo.deselect()
                 guardar("clipes_ativo", False)
                 return
-            if not self.cfg.get("clipes_baseline") == pasta:
-                n = clipes.marcar_existentes(self.hist, pasta, bool(self.cfg.get("clipes_subpastas")))
-                guardar("clipes_baseline", pasta)
-                self._escrever(f"Watching {pasta}. {n} existing clip(s) will be ignored; only new ones are posted.")
+            n = len(clipes.listar_videos(pasta, bool(self.cfg.get("clipes_subpastas"))))
+            self._escrever(f"Watching {pasta}. {n} video(s) in the folder: the ones not posted yet will be posted, "
+                           "the ones already handled are skipped.")
             guardar("clipes_ativo", True)
 
         def alternar_ativo():
@@ -1651,7 +1658,7 @@ class App(ctk.CTk):
                 sw.select()
             return sw
 
-        sw_ativo = interruptor("Watch this folder and post new clips", "clipes_ativo", False, alternar_ativo)
+        sw_ativo = interruptor("Watch this folder and post its clips", "clipes_ativo", False, alternar_ativo)
         interruptor("Include subfolders", "clipes_subpastas", False)
         interruptor("Make horizontal clips vertical (9:16, blurred background)", "clipes_vertical", True)
 

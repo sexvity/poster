@@ -159,7 +159,8 @@ class Vigia(threading.Thread):
             return []
         novos = []
         vistos_agora = set()
-        for caminho, tam, mtime in listar_videos(cfg["clipes_pasta"], bool(cfg.get("clipes_subpastas"))):
+        for caminho, tam, mtime in sorted(listar_videos(cfg["clipes_pasta"], bool(cfg.get("clipes_subpastas"))),
+                                          key=lambda x: x[2]):  # do mais antigo para o mais novo
             if self.h.conhece(caminho):
                 continue
             vistos_agora.add(caminho)
@@ -176,6 +177,18 @@ class Vigia(threading.Thread):
             if c not in vistos_agora:
                 del self._pendentes[c]
         return novos
+
+
+def liberar_antigos(historico):
+    """Clipes que versões anteriores marcaram como "antigos" (ignorados) voltam a ser candidatos a postagem.
+    Quem já foi postado (ou falhou, ou foi ignorado por duração) continua no histórico e não é postado de novo."""
+    with historico.lock:
+        antigos = [c for c, d in historico.dados["clipes"].items() if d.get("estado") == "antigo"]
+        for c in antigos:
+            historico.dados["clipes"].pop(c, None)
+        if antigos:
+            historico._gravar()
+    return len(antigos)
 
 
 def marcar_existentes(historico, pasta, recursivo=False):

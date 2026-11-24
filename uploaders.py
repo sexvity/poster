@@ -221,16 +221,16 @@ def _preparar_video_seguro(video, log=None, nivel=1):
         return None
     saida = os.path.join(tempfile.gettempdir(), f"reels_safe_{os.getpid()}_{int(time.time())}.mp4")
     if nivel == 1:
-        _log(log, "Instagram: Instagram refused the video, converting it (safe profile) and trying again...")
-        largura, perfil, crf, maxrate, bf, ar = 1080, "high", "22", "8M", "2", "48000"
+        _log(log, "Instagram: making a lighter version (1080p) for Instagram...")
+        largura, perfil, crf, maxrate, bf, ar = 1080, "high", "23", "5M", "2", "48000"
     else:
-        _log(log, "Instagram: still refused, converting it again (simplest profile, 720p)...")
-        largura, perfil, crf, maxrate, bf, ar = 720, "main", "23", "4M", "0", "44100"
+        _log(log, "Instagram: making an even lighter version (720p)...")
+        largura, perfil, crf, maxrate, bf, ar = 720, "main", "24", "3500k", "0", "44100"
     cmd = [
         ffmpeg, "-y", "-i", video, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
         "-vf", f"scale='min({largura},iw)':-2,setsar=1,fps=30,format=yuv420p",
         "-c:v", "libx264", "-profile:v", perfil, "-level", "4.0", "-preset", "medium", "-crf", crf,
-        "-maxrate", maxrate, "-bufsize", "16M", "-g", "60", "-bf", bf,
+        "-maxrate", maxrate, "-bufsize", "10M", "-g", "60", "-bf", bf,
         "-c:a", "aac", "-b:a", "128k", "-ar", ar, "-ac", "2",
         "-x264-params", "open-gop=0", "-use_editlist", "0",  # GOP fechado e sem edit list (exigências do Reels)
         "-movflags", "+faststart", "-map_metadata", "-1", "-metadata:s:v", "rotate=0", saida,
@@ -261,36 +261,43 @@ def _recusou_video(e):
             or "Transcoding" in txt or "ERROR" in txt)
 
 
+LIMITE_DIRETO_MB = 100  # acima disso o servidor de vídeo da Meta costuma falhar ao converter: já parte de uma versão leve
+
+
 def postar_instagram(cfg, video, legenda, log=None, capa_ms=None):
-    pronto = preparar_instagram(video, log, cfg.get("prefs", {}).get("compactar", True))
-    extras = []
+    """Arquivos leves vão como estão. Arquivos pesados (ou recusados pelo Instagram) vão em versões mais leves,
+    na ordem: original -> 1080p a 5 Mbps -> 720p a 3,5 Mbps."""
+    tamanho_mb = os.path.getsize(video) / (1024 * 1024)
+    extras, erro = [], None
     try:
-        try:
-            return _postar_instagram_arquivo(cfg, pronto, legenda, log, capa_ms)
-        except RuntimeError as e:
-            if not _recusou_video(e):
-                raise
-            erro = e
-        # o Instagram recusou o arquivo: converte a partir do original, primeiro com o perfil seguro e, se ainda
-        # assim recusar, com o mais simples possível
-        for nivel in (1, 2):
-            extra = _preparar_video_seguro(video, log, nivel)
-            if not extra:
-                raise erro
-            extras.append(extra)
+        niveis = [0, 1, 2]
+        if tamanho_mb > LIMITE_DIRETO_MB:
+            _log(log, f"Instagram: the video has {tamanho_mb:.0f} MB; Instagram's servers often fail with heavy "
+                      "files, so a lighter version will be sent.")
+            niveis = [1, 2]
+        for nivel in niveis:
+            if nivel == 0:
+                arquivo = video
+            else:
+                arquivo = _preparar_video_seguro(video, log, nivel)
+                if not arquivo:
+                    if erro:
+                        raise erro
+                    raise RuntimeError("Instagram: could not prepare a lighter version of the video.")
+                extras.append(arquivo)
             try:
-                return _postar_instagram_arquivo(cfg, extra, legenda, log, capa_ms)
+                return _postar_instagram_arquivo(cfg, arquivo, legenda, log, capa_ms)
             except RuntimeError as e:
-                if not _recusou_video(e) or nivel == 2:
+                if not _recusou_video(e) or nivel == niveis[-1]:
                     raise
                 erro = e
+                _log(log, "Instagram: the video was refused, trying a lighter version...")
     finally:
-        for p in [pronto] + extras:
-            if p and p != video:
-                try:
-                    os.remove(p)
-                except OSError:
-                    pass
+        for p in extras:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 def preparar_instagram(video, log=None, compactar_ligado=True):
