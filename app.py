@@ -677,6 +677,8 @@ class App(ctk.CTk):
                     )
                     self.log.insert("end", f"{datetime.now():%H:%M}  ", "hora")
                     self.log.insert("end", f"{dado}\n", tag)
+                    if int(self.log.index("end-1c").split(".")[0]) > 600:  # log gigante deixa a tela lenta
+                        self.log.delete("1.0", "200.0")
                     self.log.see("end")
                     self.log.configure(state="disabled")
                 elif tipo == "preencher":
@@ -1331,6 +1333,7 @@ class App(ctk.CTk):
 
     def _aba_direita(self, nome):
         self._aba = nome
+        self._ag_sig = None  # ao trocar de aba, redesenha a lista de agendados
         ativo = {"fg_color": ACENTO_SUAVE, "text_color": ACENTO_TEXTO, "hover_color": ACENTO_SUAVE}
         inativo = {"fg_color": "transparent", "text_color": MUTED, "hover_color": CARD2}
         self.btn_aba_log.configure(**(ativo if nome == "log" else inativo))
@@ -1352,6 +1355,12 @@ class App(ctk.CTk):
         self.btn_aba_ag.configure(text=f"Scheduled · {esperando}" if esperando else "Scheduled")
         if self._aba != "ag":
             return
+        sig = repr([(it.get("id"), {n: (i["estado"], i.get("msg", ""),
+                                        agenda.faltam(self._dt(i["alvo"])) if i["estado"] == "waiting" else "")
+                                    for n, i in it["plataformas"].items()}) for it in itens])
+        if sig == getattr(self, "_ag_sig", None):
+            return  # nada mudou: não apaga e recria a lista (isso fazia a tela piscar)
+        self._ag_sig = sig
         for w in self.f_ag.winfo_children():
             w.destroy()
         if not itens:
@@ -1803,7 +1812,7 @@ class App(ctk.CTk):
             self.hist.atualizar(caminho, estado="na_fila")
             self.fila_clipes.put(caminho)
             self._escrever(f"Trying clip again: {os.path.basename(caminho)}")
-            desenhar()
+            desenhar(True)
 
         def motivo(d):
             """Resumo curto do que deu errado, por plataforma."""
@@ -1817,12 +1826,26 @@ class App(ctk.CTk):
                 partes.append(str(d["erro"])[:110])
             return "  ·  ".join(partes)
 
-        def desenhar():
+        controle = {"sig": None, "timer": None}
+
+        def desenhar(forcar=False):
             if self._dlg_clipes is not j:
                 return
+            if controle["timer"] is not None:  # um único temporizador: sem laços acumulados
+                try:
+                    j.after_cancel(controle["timer"])
+                except Exception:
+                    pass
+                controle["timer"] = None
+            itens = self.hist.lista(30)
+            # só redesenha quando algo mudou: apagar e recriar tudo a cada poucos segundos fazia a lista piscar e travar
+            sig = repr([(c, d.get("estado"), d.get("resultados"), d.get("erro")) for c, d in itens])
+            if not forcar and sig == controle["sig"]:
+                controle["timer"] = j.after(5000, desenhar)
+                return
+            controle["sig"] = sig
             for w in lista.winfo_children():
                 w.destroy()
-            itens = self.hist.lista(30)
             if not itens:
                 ctk.CTkLabel(lista, text="No clips yet. New videos that appear in the folder will show up here.",
                              font=fonte(12), text_color=MUTED, wraplength=480, justify="left").pack(padx=12, pady=16)
@@ -1836,7 +1859,7 @@ class App(ctk.CTk):
                     ctk.CTkButton(
                         linha, text="Done", width=54, height=28, corner_radius=8, fg_color="transparent",
                         border_width=0, border_color=BORDA, text_color=MUTED, hover_color=CARD2, font=fonte(11),
-                        command=lambda c=caminho: (self.hist.atualizar(c, estado="postado"), desenhar()),
+                        command=lambda c=caminho: (self.hist.atualizar(c, estado="postado"), desenhar(True)),
                     ).pack(side="right", padx=(6, 0))
                     ctk.CTkButton(
                         linha, text="Open in editor", width=104, height=28, corner_radius=8, fg_color=ACENTO,
@@ -1853,9 +1876,9 @@ class App(ctk.CTk):
                 if d.get("estado") in ("falhou", "parcial", "aguardando") and motivo(d):
                     ctk.CTkLabel(lista, text=motivo(d), font=fonte(10), text_color=MUTED, anchor="w",
                                  justify="left", wraplength=500).pack(fill="x", padx=12, pady=(0, 4))
-            j.after(4000, desenhar)
+            controle["timer"] = j.after(5000, desenhar)
 
-        desenhar()
+        desenhar(True)
 
     # -------------------------------------------------------- configurações
     def _config(self):
