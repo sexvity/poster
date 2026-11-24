@@ -1459,28 +1459,35 @@ class App(ctk.CTk):
             self._escrever(f"Clip {nome}: skipped (shorts must be between 3 seconds and 3 minutes).")
             return
         log = self._escrever
+        anterior = self.hist.get(caminho)
+        ja_postado = {p: r for p, r in (anterior.get("resultados") or {}).items() if str(r).startswith("OK")}
         self.hist.atualizar(caminho, estado="processando")
-        log(f"Clip {nome}: watching it to write the text...")
-        quadros = [b for _, b in capa.extrair_quadros(caminho, 6)]
-        idioma = self.prefs.get("idioma", "auto")
-        audio = capa.extrair_audio(caminho) if idioma == "auto" else None
-        res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome,
-                       int(self.prefs.get("qtd_hashtags", 8)), quadros=quadros, idioma=idioma, audio=audio,
-                       titulo_pergunta=bool(self.prefs.get("titulo_pergunta", False)))
-        titulo_ = ai.sem_hashtags(res["titulo"])
-        descricao = ai.sem_hashtags(res["descricao"])
-        hashtags = self._hashtags_finais(" ".join(res["hashtags"]))
+        if anterior.get("titulo") and anterior.get("descricao"):  # nova tentativa: reaproveita o texto já escrito
+            titulo_, descricao = anterior["titulo"], anterior["descricao"]
+            hashtags = anterior.get("hashtags") or []
+        else:
+            log(f"Clip {nome}: watching it to write the text...")
+            quadros = [b for _, b in capa.extrair_quadros(caminho, 6)]
+            idioma = self.prefs.get("idioma", "auto")
+            audio = capa.extrair_audio(caminho) if idioma == "auto" else None
+            res = ai.gerar(cfg.get("gemini_api_key", ""), clipes.dica(caminho), nome,
+                           int(self.prefs.get("qtd_hashtags", 8)), quadros=quadros, idioma=idioma, audio=audio,
+                           titulo_pergunta=bool(self.prefs.get("titulo_pergunta", False)))
+            titulo_ = ai.sem_hashtags(res["titulo"])
+            descricao = ai.sem_hashtags(res["descricao"])
+            hashtags = self._hashtags_finais(" ".join(res["hashtags"]))
         legenda = f"{titulo_}\n\n{descricao}\n\n{' '.join(hashtags)}".strip()
         self.hist.atualizar(caminho, titulo=titulo_, descricao=descricao, hashtags=hashtags)
 
         auto = [p for p in ("YouTube Shorts", "Instagram Reels") if p in cfg.get("clipes_auto", [])]
+        pendentes = [p for p in auto if p not in ja_postado]
         quer_tiktok = bool(cfg.get("clipes_tiktok"))
         arquivo, temporario = caminho, False
-        if (auto or quer_tiktok) and cfg.get("clipes_vertical", True):
+        if (pendentes or quer_tiktok) and cfg.get("clipes_vertical", True):
             arquivo, temporario = compactar.vertical(caminho, log, "Clip")
-        resultados = {}
+        resultados = dict(ja_postado)
         try:
-            for plataforma in auto:
+            for plataforma in pendentes:
                 resultados[plataforma] = self._postar_clipe(plataforma, caminho, arquivo, titulo_, descricao, hashtags, legenda)
             pronto = ""
             if quer_tiktok:
@@ -1502,6 +1509,8 @@ class App(ctk.CTk):
             log(f"Clip {nome}: ready for TikTok. Open the Clips window and click 'Open in editor' to review and post.")
         elif auto and not feitos:
             estado = "falhou"
+        elif auto and len(feitos) < len(auto):
+            estado = "parcial"
         else:
             estado = "postado"
         self.hist.atualizar(caminho, estado=estado, resultados=resultados, pronto=pronto)
@@ -1720,8 +1729,26 @@ class App(ctk.CTk):
         ROTULOS = {
             "na_fila": ("Waiting", MUTED), "processando": ("Working...", AMBAR), "postado": ("Posted", VERDE),
             "pronto_tiktok": ("Ready for TikTok", ACENTO), "falhou": ("Failed", VERMELHO),
-            "ignorado": ("Skipped", MUTED),
+            "ignorado": ("Skipped", MUTED), "parcial": ("Partly posted", AMBAR),
         }
+
+        def tentar_de_novo(caminho):
+            self.hist.atualizar(caminho, estado="na_fila")
+            self.fila_clipes.put(caminho)
+            self._escrever(f"Trying clip again: {os.path.basename(caminho)}")
+            desenhar()
+
+        def motivo(d):
+            """Resumo curto do que deu errado, por plataforma."""
+            partes = []
+            for plat, r in (d.get("resultados") or {}).items():
+                r = str(r)
+                if not r.startswith("OK"):
+                    curto = "YouTube" if plat.startswith("You") else "Instagram"
+                    partes.append(f"{curto}: {r[:90]}")
+            if not partes and d.get("erro"):
+                partes.append(str(d["erro"])[:110])
+            return "  ·  ".join(partes)
 
         def desenhar():
             if self._dlg_clipes is not j:
@@ -1749,7 +1776,16 @@ class App(ctk.CTk):
                         hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(11),
                         command=lambda c=caminho: self._carregar_clip(c),
                     ).pack(side="right", padx=(6, 0))
+                if d.get("estado") in ("falhou", "parcial"):
+                    ctk.CTkButton(
+                        linha, text="Retry", width=54, height=28, corner_radius=8, fg_color=CARD2,
+                        border_width=0, border_color=BORDA, text_color=ACENTO_TEXTO, hover_color=HOVER,
+                        font=fonte_t(11), command=lambda c=caminho: tentar_de_novo(c),
+                    ).pack(side="right", padx=(6, 0))
                 ctk.CTkLabel(linha, text=txt, font=fonte_t(11), text_color=cor).pack(side="right", padx=(8, 4))
+                if d.get("estado") in ("falhou", "parcial") and motivo(d):
+                    ctk.CTkLabel(lista, text=motivo(d), font=fonte(10), text_color=MUTED, anchor="w",
+                                 justify="left", wraplength=500).pack(fill="x", padx=12, pady=(0, 4))
             j.after(4000, desenhar)
 
         desenhar()

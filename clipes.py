@@ -10,7 +10,7 @@ import time
 
 EXTENSOES = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
 ARQUIVO = "clipes.json"
-ESTADOS_FINAIS = ("postado", "pronto_tiktok", "falhou", "ignorado", "antigo")
+ESTADOS_FINAIS = ("postado", "pronto_tiktok", "falhou", "parcial", "ignorado", "antigo")
 
 
 class Historico:
