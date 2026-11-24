@@ -1426,6 +1426,21 @@ class App(ctk.CTk):
         self.vigia = clipes.Vigia(self.hist, lambda: self.cfg, self._clipe_novo)
         self.vigia.start()
         threading.Thread(target=self._trabalhador_clipes, daemon=True).start()
+        threading.Thread(target=self._reenfileirar_aguardando, daemon=True).start()
+
+    def _reenfileirar_aguardando(self):
+        """Clipes que esperam o YouTube voltar (limite diário de envios) entram de novo na fila quando a pausa acaba."""
+        while True:
+            time.sleep(60)
+            try:
+                if not self.cfg.get("clipes_ativo"):
+                    continue
+                for caminho, plataformas in self.hist.aguardando():
+                    if plataformas and all(self.hist.pausa_restante(p) <= 0 for p in plataformas):
+                        self.hist.atualizar(caminho, estado="na_fila")
+                        self.fila_clipes.put(caminho)
+            except Exception:
+                pass
 
     def _clipe_novo(self, caminho):
         self._escrever(f"New clip found: {os.path.basename(caminho)}")
@@ -1507,6 +1522,8 @@ class App(ctk.CTk):
         if quer_tiktok:
             estado = "pronto_tiktok"
             log(f"Clip {nome}: ready for TikTok. Open the Clips window and click 'Open in editor' to review and post.")
+        elif any(str(r).startswith("waiting") for r in resultados.values()):
+            estado = "aguardando"
         elif auto and not feitos:
             estado = "falhou"
         elif auto and len(feitos) < len(auto):
@@ -1521,6 +1538,9 @@ class App(ctk.CTk):
         limite = int(cfg.get("clipes_limite_dia", 3) or 0)
         intervalo = int(cfg.get("clipes_intervalo_min", 60) or 0)
         log = self._escrever
+        faltam = self.hist.pausa_restante(plataforma)
+        if faltam > 0:  # limite diário do site: não tenta agora, o clipe espera e volta sozinho
+            return f"waiting: {plataforma} upload limit, trying again in {int(faltam // 60) + 1} min"
         while True:
             espera = self.hist.espera_para_postar(plataforma, limite, intervalo)
             if espera is None:
@@ -1545,6 +1565,13 @@ class App(ctk.CTk):
             log(f"OK {plataforma}: {r}")
             return f"OK {r}"
         except Exception as e:
+            txt = str(e)
+            if "uploadLimitExceeded" in txt or "quotaExceeded" in txt or "dailyLimitExceeded" in txt:
+                horas = 1  # o YouTube libera de novo aos poucos (janela de 24 h): confere de hora em hora
+                self.hist.pausar(plataforma, horas * 3600)
+                log(f"{plataforma}: daily upload limit reached. Pausing it and trying again in {horas} h "
+                    "(the other sites keep posting).")
+                return f"waiting: {plataforma} upload limit, trying again in {horas * 60} min"
             log(f"FAILED {plataforma}: {e}")
             return f"failed: {str(e)[:150]}"
         finally:
@@ -1729,7 +1756,7 @@ class App(ctk.CTk):
         ROTULOS = {
             "na_fila": ("Waiting", MUTED), "processando": ("Working...", AMBAR), "postado": ("Posted", VERDE),
             "pronto_tiktok": ("Ready for TikTok", ACENTO), "falhou": ("Failed", VERMELHO),
-            "ignorado": ("Skipped", MUTED), "parcial": ("Partly posted", AMBAR),
+            "ignorado": ("Skipped", MUTED), "parcial": ("Partly posted", AMBAR), "aguardando": ("Waiting for YouTube", AMBAR),
         }
 
         def tentar_de_novo(caminho):
@@ -1776,14 +1803,14 @@ class App(ctk.CTk):
                         hover_color=ACENTO_HOVER, text_color="white", font=fonte_t(11),
                         command=lambda c=caminho: self._carregar_clip(c),
                     ).pack(side="right", padx=(6, 0))
-                if d.get("estado") in ("falhou", "parcial"):
+                if d.get("estado") in ("falhou", "parcial", "aguardando"):
                     ctk.CTkButton(
                         linha, text="Retry", width=54, height=28, corner_radius=8, fg_color=CARD2,
                         border_width=0, border_color=BORDA, text_color=ACENTO_TEXTO, hover_color=HOVER,
                         font=fonte_t(11), command=lambda c=caminho: tentar_de_novo(c),
                     ).pack(side="right", padx=(6, 0))
                 ctk.CTkLabel(linha, text=txt, font=fonte_t(11), text_color=cor).pack(side="right", padx=(8, 4))
-                if d.get("estado") in ("falhou", "parcial") and motivo(d):
+                if d.get("estado") in ("falhou", "parcial", "aguardando") and motivo(d):
                     ctk.CTkLabel(lista, text=motivo(d), font=fonte(10), text_color=MUTED, anchor="w",
                                  justify="left", wraplength=500).pack(fill="x", padx=12, pady=(0, 4))
             j.after(4000, desenhar)

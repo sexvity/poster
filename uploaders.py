@@ -318,6 +318,21 @@ def preparar_instagram(video, log=None, compactar_ligado=True):
 
 
 def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
+    """Envia um arquivo ao Instagram. Se o Reel (container) emperrar por culpa do servidor, recomeça com um novo."""
+    for i in (1, 2, 3):
+        try:
+            return _postar_instagram_uma_vez(cfg, video, legenda, log, capa_ms)
+        except RuntimeError as e:
+            t = str(e)
+            passageiro = ("not in the status" in t or "FILE_NOT_FOUND" in t or "Request processing failed" in t) \
+                and "Transcoding" not in t
+            if not passageiro or i == 3:
+                raise
+            _log(log, f"Instagram: the Reel got stuck on Instagram's side, starting over with a new one ({i}/2)...")
+            time.sleep(15)
+
+
+def _postar_instagram_uma_vez(cfg, video, legenda, log=None, capa_ms=None):
     uid = cfg.get("instagram_user_id", "")
     token = cfg.get("instagram_access_token", "")
     if not uid or not token:
@@ -392,7 +407,7 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
         )
         if r.ok:
             break
-        if "Transcoding" not in r.text and tentativa < 4:
+        if "Transcoding" not in r.text and "not in the status" not in r.text and tentativa < 4:
             _log(log, f"Instagram: server not ready, trying again ({tentativa}/3)...")
             time.sleep(8 * tentativa)
         else:

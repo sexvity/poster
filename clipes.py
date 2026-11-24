@@ -10,7 +10,7 @@ import time
 
 EXTENSOES = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
 ARQUIVO = "clipes.json"
-ESTADOS_FINAIS = ("postado", "pronto_tiktok", "falhou", "parcial", "ignorado", "antigo")
+ESTADOS_FINAIS = ("postado", "pronto_tiktok", "falhou", "parcial", "aguardando", "ignorado", "antigo")
 
 
 class Historico:
@@ -19,12 +19,13 @@ class Historico:
     def __init__(self, arquivo=ARQUIVO):
         self.arquivo = arquivo
         self.lock = threading.RLock()
-        self.dados = {"clipes": {}, "postagens": {}}
+        self.dados = {"clipes": {}, "postagens": {}, "pausas": {}}
         try:
             with open(arquivo, encoding="utf-8") as f:
                 lido = json.load(f)
             self.dados["clipes"] = lido.get("clipes", {})
             self.dados["postagens"] = lido.get("postagens", {})
+            self.dados["pausas"] = lido.get("pausas", {})
         except Exception:
             pass
 
@@ -54,6 +55,22 @@ class Historico:
             itens = [(c, dict(d)) for c, d in self.dados["clipes"].items() if d.get("estado") != "antigo"]
         itens.sort(key=lambda x: x[1].get("quando", 0), reverse=True)
         return itens[:limite]
+
+    # ---- pausas (ex.: o YouTube barrou os envios do dia)
+    def pausar(self, plataforma, segundos):
+        with self.lock:
+            self.dados["pausas"][plataforma] = time.time() + segundos
+            self._gravar()
+
+    def pausa_restante(self, plataforma):
+        with self.lock:
+            return max(0, self.dados["pausas"].get(plataforma, 0) - time.time())
+
+    def aguardando(self):
+        """Clipes que ficaram esperando uma plataforma voltar: [(caminho, [plataformas])]."""
+        with self.lock:
+            return [(c, [p for p, r in (d.get("resultados") or {}).items() if str(r).startswith("waiting")])
+                    for c, d in self.dados["clipes"].items() if d.get("estado") == "aguardando"]
 
     # ---- limites de postagem
     def _recentes(self, plataforma, janela_s):
