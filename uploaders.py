@@ -209,7 +209,7 @@ def _preparar_video(video, log=None):
     return saida
 
 
-def _preparar_video_seguro(video, log=None):
+def _preparar_video_seguro(video, log=None, nivel=1):
     """Conversão conservadora para quando o Instagram recusa o arquivo (ProcessingFailed): mapeia só 1 vídeo + 1 áudio,
     remove metadados/rotação, H.264 High 4.0, 30 fps constante, GOP de 2 s, AAC 48 kHz estéreo, até 1080 de largura."""
     try:
@@ -220,13 +220,18 @@ def _preparar_video_seguro(video, log=None):
     if not ffmpeg:
         return None
     saida = os.path.join(tempfile.gettempdir(), f"reels_safe_{os.getpid()}_{int(time.time())}.mp4")
-    _log(log, "Instagram: Instagram refused the video format, converting it and trying again...")
+    if nivel == 1:
+        _log(log, "Instagram: Instagram refused the video, converting it (safe profile) and trying again...")
+        largura, perfil, crf, maxrate, bf, ar = 1080, "high", "22", "8M", "2", "48000"
+    else:
+        _log(log, "Instagram: still refused, converting it again (simplest profile, 720p)...")
+        largura, perfil, crf, maxrate, bf, ar = 720, "main", "23", "4M", "0", "44100"
     cmd = [
         ffmpeg, "-y", "-i", video, "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn",
-        "-vf", "scale='min(1080,iw)':-2,setsar=1,fps=30,format=yuv420p",
-        "-c:v", "libx264", "-profile:v", "high", "-level", "4.0", "-preset", "medium", "-crf", "22",
-        "-maxrate", "8M", "-bufsize", "16M", "-g", "60", "-bf", "2",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
+        "-vf", f"scale='min({largura},iw)':-2,setsar=1,fps=30,format=yuv420p",
+        "-c:v", "libx264", "-profile:v", perfil, "-level", "4.0", "-preset", "medium", "-crf", crf,
+        "-maxrate", maxrate, "-bufsize", "16M", "-g", "60", "-bf", bf,
+        "-c:a", "aac", "-b:a", "128k", "-ar", ar, "-ac", "2",
         "-movflags", "+faststart", "-map_metadata", "-1", "-metadata:s:v", "rotate=0", saida,
     ]
     try:
@@ -249,24 +254,37 @@ def _dados_reel(legenda, token, capa_ms=None):
     return d
 
 
+def _recusou_video(e):
+    txt = str(e)
+    return ("ProcessingFailed" in txt or "processing failed" in txt.lower() or "rejected the video" in txt
+            or "Transcoding" in txt or "ERROR" in txt)
+
+
 def postar_instagram(cfg, video, legenda, log=None, capa_ms=None):
     pronto = preparar_instagram(video, log, cfg.get("prefs", {}).get("compactar", True))
-    extra = None
+    extras = []
     try:
         try:
             return _postar_instagram_arquivo(cfg, pronto, legenda, log, capa_ms)
         except RuntimeError as e:
-            txt = str(e)
-            if "ProcessingFailed" not in txt and "processing failed" not in txt.lower() and "rejected the video" not in txt \
-                    and "ERROR" not in txt:
+            if not _recusou_video(e):
                 raise
-            # parte do original (não do já convertido) com um perfil bem conservador e tenta de novo
-            extra = _preparar_video_seguro(video, log)
+            erro = e
+        # o Instagram recusou o arquivo: converte a partir do original, primeiro com o perfil seguro e, se ainda
+        # assim recusar, com o mais simples possível
+        for nivel in (1, 2):
+            extra = _preparar_video_seguro(video, log, nivel)
             if not extra:
-                raise
-            return _postar_instagram_arquivo(cfg, extra, legenda, log, capa_ms)
+                raise erro
+            extras.append(extra)
+            try:
+                return _postar_instagram_arquivo(cfg, extra, legenda, log, capa_ms)
+            except RuntimeError as e:
+                if not _recusou_video(e) or nivel == 2:
+                    raise
+                erro = e
     finally:
-        for p in (pronto, extra):
+        for p in [pronto] + extras:
             if p and p != video:
                 try:
                     os.remove(p)
@@ -366,7 +384,7 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
         )
         if r.ok:
             break
-        if tentativa < 4:
+        if "Transcoding" not in r.text and tentativa < 4:
             _log(log, f"Instagram: server not ready, trying again ({tentativa}/3)...")
             time.sleep(8 * tentativa)
         else:
@@ -378,6 +396,7 @@ def _postar_instagram_arquivo(cfg, video, legenda, log=None, capa_ms=None):
                 _log(log, f"Instagram: container status: {est.text[:300]}")
             except Exception:
                 pass
+            break
     _checar(r)
     del corpo
 
